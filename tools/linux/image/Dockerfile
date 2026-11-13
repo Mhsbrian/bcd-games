@@ -24,3 +24,18 @@ RUN rm /usr/bin/clang /usr/bin/clang++ \
  && printf '#!/bin/sh\n[ -n "$BCD_SHIMS" ] && exec "$BCD_SHIMS/clang" "$@"\nexec /usr/bin/clang-21 "$@"\n' > /usr/bin/clang \
  && printf '#!/bin/sh\n[ -n "$BCD_SHIMS" ] && exec "$BCD_SHIMS/clang++" "$@"\nexec /usr/bin/clang-21 --driver-mode=g++ "$@"\n' > /usr/bin/clang++ \
  && chmod +x /usr/bin/clang /usr/bin/clang++
+# /usr/libexec/PlistBuddy is named by its full path in the workflow; it hands over to the stand-in.
+RUN mkdir -p /usr/libexec && printf '#!/bin/sh\nexec "${BCD_SHIMS:?PlistBuddy needs tools/linux/bx}/PlistBuddy" "$@"\n' > /usr/libexec/PlistBuddy \
+ && chmod +x /usr/libexec/PlistBuddy
+# Rust with the iPhone target, for the pairing library (build/rppairing-ios). Anyone may write there, so
+# `rustup target add` and cargo's registry work for whichever user tools/linux/bx runs as.
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --target aarch64-apple-ios \
+ && chmod -R a+rwX /opt/rustup /opt/cargo
+ENV PATH=/opt/cargo/bin:$PATH
+# rcodesign (apple-codesign, MPL-2.0): ad-hoc signatures with entitlements, which tools/ota-variants.py asks of
+# `codesign` when it packages the unsigned IPA (tools/linux/shims/codesign).
+RUN ln -s clang /usr/bin/cc && ln -s clang++ /usr/bin/c++ \
+ && cargo install --locked --version 0.29.0 apple-codesign --root /opt/rcodesign \
+ && rm -rf /opt/cargo/registry /opt/cargo/git && chmod -R a+rwX /opt/cargo
+ENV PATH=/opt/rcodesign/bin:$PATH

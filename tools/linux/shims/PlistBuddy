@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+"""PlistBuddy, as much of it as BCD's build uses: -c "Print|Set|Add|Delete :Key[:Sub...] [type] [value]" FILE.
+
+Keys are separated by colons; a number names an array element. A file is written back in the format it had
+(XML or binary). Anything else PlistBuddy can do is refused, not guessed.
+"""
+import plistlib
+import sys
+
+
+def fail(text, code=1):
+    print(text, file=sys.stderr)
+    sys.exit(code)
+
+
+def walk(root, path, create=False):
+    """(container, last key) for ":A:B:0"."""
+    parts = [p for p in path.split(":") if p != ""]
+    if not parts:
+        fail("PlistBuddy stand-in: an entry path is needed", 64)
+    node = root
+    for part in parts[:-1]:
+        try:
+            node = node[int(part)] if isinstance(node, list) else node[part]
+        except (KeyError, IndexError, ValueError):
+            if not create or isinstance(node, list):
+                fail(f'Entry, "{path}", Does Not Exist')
+            node[part] = {}
+            node = node[part]
+    last = parts[-1]
+    return node, (int(last) if isinstance(node, list) else last)
+
+
+def typed(kind, text):
+    kind = kind.lower()
+    if kind == "string":
+        return text
+    if kind == "integer":
+        return int(text)
+    if kind == "real":
+        return float(text)
+    if kind == "bool":
+        return text.lower() in ("true", "yes", "1")
+    if kind == "array":
+        return []
+    if kind == "dict":
+        return {}
+    fail(f"PlistBuddy stand-in: type {kind} is not handled", 64)
+
+
+def main():
+    args, commands, xml = sys.argv[1:], [], False
+    while args and args[0].startswith("-"):
+        if args[0] == "-c" and len(args) > 1:
+            commands.append(args[1])
+            args = args[2:]
+        elif args[0] == "-x":
+            xml, args = True, args[1:]
+        else:
+            fail(f"PlistBuddy stand-in: option {args[0]} is not handled", 64)
+    if len(args) != 1 or not commands:
+        fail("PlistBuddy stand-in: usage: PlistBuddy -c COMMAND [-c COMMAND ...] FILE", 64)
+    path = args[0]
+    try:
+        raw = open(path, "rb").read()
+        root, fmt = plistlib.loads(raw), (plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML)
+    except FileNotFoundError:
+        root, fmt = {}, plistlib.FMT_XML
+    changed = False
+    for command in commands:
+        verb, _, rest = command.strip().partition(" ")
+        verb, rest = verb.lower(), rest.strip()
+        if verb == "print":
+            value = root
+            if rest:
+                node, key = walk(root, rest)
+                try:
+                    value = node[key]
+                except (KeyError, IndexError):
+                    fail(f'Print: Entry, "{rest}", Does Not Exist')
+            if xml or isinstance(value, (dict, list)):
+                sys.stdout.write(plistlib.dumps(value).decode())
+            else:
+                print("true" if value is True else "false" if value is False else value)
+        elif verb == "set":
+            entry, _, text = rest.partition(" ")
+            node, key = walk(root, entry)
+            try:
+                old = node[key]
+            except (KeyError, IndexError):
+                fail(f'Set: Entry, "{entry}", Does Not Exist')
+            kind = "bool" if isinstance(old, bool) else "integer" if isinstance(old, int) else "real" if isinstance(old, float) else "string"
+            node[key] = typed(kind, text)
+            changed = True
+        elif verb == "add":
+            entry, _, tail = rest.partition(" ")
+            kind, _, text = tail.strip().partition(" ")
+            node, key = walk(root, entry, create=True)
+            if isinstance(node, list):
+                node.insert(key, typed(kind, text))
+            elif key in node:
+                fail(f'Add: "{entry}" Entry Already Exists')
+            else:
+                node[key] = typed(kind, text)
+            changed = True
+        elif verb == "delete":
+            node, key = walk(root, rest)
+            try:
+                del node[key]
+            except (KeyError, IndexError):
+                fail(f'Delete: Entry, "{rest}", Does Not Exist')
+            changed = True
+        else:
+            fail(f"PlistBuddy stand-in: command {verb} is not handled", 64)
+    if changed:
+        with open(path, "wb") as out:
+            plistlib.dump(root, out, fmt=fmt, sort_keys=False)
+
+
+if __name__ == "__main__":
+    main()

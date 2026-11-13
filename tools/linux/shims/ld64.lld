@@ -1,21 +1,154 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright 2026 B Honey (Mhsbrian/bcd-games)
 # A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
-# The Mach-O linker from xtool's Darwin SDK bundle. It links for iOS but says on every run that it does
-# not support the platform; configure scripts read any linker output as a failed check, so that one line
-# is dropped and everything else it says is kept.
-. "$(dirname "$0")/_env.sh"
-# LLVM 15's CMake passes "-z defs" when the system is named iOS (HandleLLVMOptions.cmake excludes only
-# "Darwin"); lld's Mach-O linker stops on "-z". It is an ELF option with no meaning for Mach-O, so the pair
-# is dropped rather than failing the libraries that come after it in the build.
-args=(); skip=
-for a in "$@"; do
-    if [ -n "$skip" ]; then skip=; continue; fi
-    if [ "$a" = "-z" ]; then skip=1; continue; fi
-    args+=("$a")
-done
-"$BCD_LD64" "${args[@]}" 2> >(grep -v 'does not support linking for platform' >&2)
-code=$?
-wait
-exit $code
+"""The Mach-O linker: lld from xtool's Darwin SDK bundle, with four differences from Apple's ld smoothed.
+
+1. It says "This version of lld does not support linking for platform ..." on every run and links anyway.
+   Configure scripts read any linker output as a failed check, so that line is dropped.
+2. LLVM 15's CMake passes "-z defs" when the system is named iOS; lld's Mach-O linker stops on "-z", an
+   ELF option with no meaning here. The pair is dropped.
+3. Zero-filled globals defined twice. Wine's server and its ntdll each define native_machine,
+   server_start_time and supported_machines_count with "= 0", and BCD puts both in one program. Apple's
+   linker accepts that and gives them one storage (BCD's Mac build links these very sources); lld calls
+   them duplicate symbols. When a link fails ONLY on duplicates whose every definition is in
+   __DATA,__common, the later definition is marked weak in a private copy of its archive and the link is
+   run again, which gives the same result: one storage, the first definition's. Any other duplicate is
+   reported as lld reported it. That Apple's linker merges them is inferred from that build, not read
+   from Apple's sources; the names are printed every time so the list is visible.
+4. Ad-hoc signatures for iOS output (see main()).
+"""
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+DARWIN = os.environ.get("BCD_DARWIN", "/opt/darwin")
+LLD = os.path.join(DARWIN, "toolset/bin/orig/ld64.lld")
+LLVM = "/usr/lib/llvm-18/bin"
+NOISE = "does not support linking for platform"
+
+
+def link(args):
+    done = subprocess.run([LLD] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    err = "".join(line for line in done.stderr.splitlines(True) if NOISE not in line)
+    return done.returncode, done.stdout, err
+
+
+def nlists(data):
+    """(offset of each nlist_64, its name) of a thin 64-bit Mach-O object."""
+    if struct.unpack_from("<I", data, 0)[0] != 0xFEEDFACF:
+        return
+    count, at = struct.unpack_from("<I", data, 16)[0], 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, at)
+        if command == 0x2:
+            symoff, nsyms, stroff, _ = struct.unpack_from("<IIII", data, at + 8)
+            for i in range(nsyms):
+                entry = symoff + 16 * i
+                strx = struct.unpack_from("<I", data, entry)[0]
+                end = data.index(b"\0", stroff + strx)
+                yield entry, bytes(data[stroff + strx:end]).decode(errors="replace")
+        at += size
+
+
+def sections(data):
+    """Section number -> (segment, section) of a thin 64-bit Mach-O object."""
+    out, number = {}, 0
+    count, at = struct.unpack_from("<I", data, 16)[0], 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, at)
+        if command == 0x19:
+            nsects = struct.unpack_from("<I", data, at + 64)[0]
+            for i in range(nsects):
+                base = at + 72 + 80 * i
+                number += 1
+                out[number] = (data[base + 16:base + 32].rstrip(b"\0").decode(), data[base:base + 16].rstrip(b"\0").decode())
+        at += size
+    return out
+
+
+def member(archive, name, work):
+    folder = tempfile.mkdtemp(dir=work)
+    subprocess.run([f"{LLVM}/llvm-ar", "x", archive, name], cwd=folder, check=True)
+    return os.path.join(folder, name)
+
+
+def in_common(path, symbol):
+    data = open(path, "rb").read()
+    names = sections(data)
+    for entry, name in nlists(data):
+        n_type, n_sect = data[entry + 4], data[entry + 5]
+        if name == symbol and n_type & 0x0E == 0x0E:      # defined in a section
+            return names.get(n_sect) == ("__DATA", "__common")
+    return False
+
+
+def weaken(path, symbol):
+    data = bytearray(open(path, "rb").read())
+    for entry, name in nlists(data):
+        if name == symbol and data[entry + 4] & 0x0E == 0x0E:
+            desc = struct.unpack_from("<H", data, entry + 6)[0]
+            struct.pack_into("<H", data, entry + 6, desc | 0x0080)     # N_WEAK_DEF
+    open(path, "wb").write(data)
+
+
+def main():
+    args, skip = [], False
+    for a in sys.argv[1:]:
+        if skip:
+            skip = False
+        elif a == "-z":
+            skip = True
+        else:
+            args.append(a)
+    # Apple's linker signs every arm64 program and library it makes ad hoc; lld does so by itself only for
+    # macOS and the simulator. Asked for here, so a dylib built on Linux carries the signature the app's
+    # "Sign bundled dylibs" phase and dyld expect (a sideloader signs the whole app again on install).
+    if "-r" not in args and "-adhoc_codesign" not in args and "-no_adhoc_codesign" not in args:
+        args.append("-adhoc_codesign")
+    code, out, err = link(args)
+    work, private, merged = None, {}, []
+    for _ in range(8):
+        duplicates = re.findall(r"error: duplicate symbol: (\S+)\n>>> defined in (.+?)\((.+?)\)\n>>> defined in (.+?)\((.+?)\)", err)
+        other = [line for line in err.splitlines() if "error:" in line and "duplicate symbol" not in line and "too many errors" not in line]
+        if code == 0 or not duplicates or other:
+            break
+        work = work or tempfile.mkdtemp(prefix="bcd-ld-")
+        todo = []
+        for symbol, first, first_member, second, second_member in duplicates:
+            name = "_" + symbol
+            if not (in_common(member(first, first_member, work), name) and in_common(member(second, second_member, work), name)):
+                todo = None
+                break
+            todo.append((name, second, second_member))
+        if not todo:
+            break
+        for name, archive, inner in todo:
+            if archive not in private:
+                private[archive] = os.path.join(tempfile.mkdtemp(dir=work), os.path.basename(archive))
+                shutil.copy2(archive, private[archive])
+            copy = private[archive]
+            obj = member(copy, inner, work)
+            weaken(obj, name)
+            subprocess.run([f"{LLVM}/llvm-ar", "r", copy, inner], cwd=os.path.dirname(obj), check=True, stderr=subprocess.DEVNULL)
+            merged.append(name)
+        # The private copies come first on the search path, and replace any archive named by its path.
+        again = [private.get(os.path.realpath(a), private.get(a, a)) for a in args]
+        again = [f"-L{os.path.dirname(p)}" for p in private.values()] + again
+        code, out, err = link(again)
+    if merged and code == 0:
+        sys.stderr.write("ld64.lld stand-in: zero-filled globals defined twice, linked as one as Apple's linker does: "
+                         + ", ".join(sorted(set(merged))) + "\n")
+    sys.stdout.write(out)
+    sys.stderr.write(err)
+    if work:
+        shutil.rmtree(work, ignore_errors=True)
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main()

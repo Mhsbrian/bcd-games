@@ -5,5 +5,6 @@
 . "$(dirname "$0")/_env.sh"
 case "$*" in
     -version) echo "Xcode (Linux stand-in; iPhoneOS SDK $(bcd_sdk_version iphoneos))"; echo "Build version none" ;;
+    *" archive "*|"archive "*|*" archive") exec python3 "$(dirname "$0")/../xcodebuild.py" "$@" ;;
     *) echo "xcodebuild stand-in: there is no Xcode on Linux; this step cannot run as written ($*)" >&2; exit 78 ;;
 esac

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# ditto SRC DST, the only form the build uses: copy a file or a folder's contents, making DST's parents.
+[ $# -eq 2 ] || { echo "ditto stand-in: only 'ditto SRC DST' is handled" >&2; exit 64; }
+if [ -d "$1" ]; then mkdir -p "$2" && cp -R "$1"/. "$2"/; else mkdir -p "$(dirname "$2")" && cp "$1" "$2"; fi

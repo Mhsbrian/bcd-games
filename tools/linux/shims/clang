@@ -46,6 +46,11 @@ case $target in *apple*) ;; *)
     fi ;;
 esac
 extra=()
+# Apple's clang keeps C's tentative definitions as common symbols (Xcode's GCC_NO_COMMON_BLOCKS is off unless a
+# project turns it on); the open clang does not. BCD's link depends on it: Wine's server and its ntdll each
+# define a few globals (native_machine, supported_machines, ...) that one program can only hold as commons,
+# and build/wineserver/build.sh describes that merging. Without this the app's link ends in duplicate symbols.
+case " $* " in *" -fno-common "*|*" -fcommon "*) ;; *) extra+=(-fcommon) ;; esac
 if [ -z "$target" ]; then
     if [ -n "$mac" ]; then extra+=(--target=$arch-apple-macosx); else extra+=(--target=$arch-apple-ios${min:-${IPHONEOS_DEPLOYMENT_TARGET:-17.0}}); fi
 fi

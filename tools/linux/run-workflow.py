@@ -51,6 +51,8 @@ SHIMS = ROOT / "tools" / "linux" / "shims"
 NOT_ON_LINUX = {
     "Select newest Xcode": "picks among the Xcodes installed on a Mac; the SDK here is the one tools/linux/bx mounts",
     "Sign for OTA install (private bucket)": "signs and uploads with upstream's secrets; not for a fork",
+    "Package Madeira and Madeira2 unsigned IPAs":
+        "makes a second app (com.thebcd69.bcd2) as well; the fork packages the one app with tools/linux/package.py",
     "Use public Metal atomics when the compiler needs them (Xcode 27)":
         "changes a shader's source for a newer Metal compiler; the compiled shaders come from a built BCD here",
 }
@@ -185,7 +187,8 @@ def read_pairs(path):
     return pairs
 
 
-HOST_CHECK = re.compile(r"^[ \t]*python3 tests/host/check-[\w.-]+\.py\b[^\n]*\n?", re.M)
+# The whole command, with the lines a trailing backslash continues it onto.
+HOST_CHECK = re.compile(r"^[ \t]*python3 tests/host/check-[\w.-]+\.py\b(?:[^\n]*\\\n)*[^\n]*\n?", re.M)
 
 
 def run_step(number, step, state, expressions, jobs, checks, extra):
@@ -194,7 +197,7 @@ def run_step(number, step, state, expressions, jobs, checks, extra):
         # A build step may run a host check of its own before the patch it applies. Those are checks like the
         # "Check ..." steps, several compile and run a piece of the engine on the build machine with macOS
         # headers (mach/mach_time.h, F_GETPATH), and they are left out the same way unless --checks is given.
-        script = HOST_CHECK.sub(lambda m: f": # not run on Linux without --checks: {m.group(0).strip()}\n", script)
+        script = HOST_CHECK.sub(lambda m: ": # not run on Linux without --checks: " + " ".join(m.group(0).replace("\\\n", " ").split()) + "\n", script)
     LOGS.mkdir(parents=True, exist_ok=True)
     work = STATE / "step"
     work.mkdir(parents=True, exist_ok=True)
@@ -208,7 +211,7 @@ def run_step(number, step, state, expressions, jobs, checks, extra):
     env.update(GITHUB_WORKSPACE=str(ROOT), GITHUB_ENV=str(files["env"]), GITHUB_OUTPUT=str(files["output"]),
                GITHUB_PATH=str(files["path"]), GITHUB_STEP_SUMMARY=str(files["summary"]), RUNNER_TEMP=str(STATE / "tmp"),
                RUNNER_OS="Linux", CI="true", BCD_LINUX_BUILD="1", BCD_JOBS=str(jobs),
-               PATH=":".join([str(SHIMS)] + state["path"] + ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]))
+               PATH=":".join([str(SHIMS)] + state["path"] + ["/opt/cargo/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]))
     (STATE / "tmp").mkdir(exist_ok=True)
     args = [str(BX), "env"] + [f"{k}={v}" for k, v in env.items()]
     # GitHub runs `bash -e` by default and `bash --noprofile --norc -eo pipefail` for `shell: bash`.
@@ -246,6 +249,20 @@ def main():
     steps = load_steps()
     state = load_state()
     extra = dict(pair.split("=", 1) for pair in a.env)
+    # The built BCD that stands in for Apple-only tools (shaders, the converter library, the asset catalog):
+    # copied once into the checkout, which is all the build image sees, and named to every step by that path.
+    reference = os.environ.get("BCD_UPSTREAM_IPA", "")
+    if reference and a.action == "run":
+        staged = STATE / "upstream.ipa"
+        source = Path(reference)
+        if not source.is_file():
+            sys.exit(f"run-workflow: BCD_UPSTREAM_IPA={reference} is not a file")
+        if not staged.exists() or staged.stat().st_size != source.stat().st_size or staged.stat().st_mtime < source.stat().st_mtime:
+            STATE.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(source, staged)
+        os.environ["BCD_UPSTREAM_IPA"] = str(staged)
+        extra.setdefault("BCD_UPSTREAM_IPA", str(staged))
     if a.action == "show":
         step = steps[a.step - 1]
         print(f"# {a.step}: {step.get('name')}\n# if: {step.get('if')}\n# env: {step.get('env')}\n")

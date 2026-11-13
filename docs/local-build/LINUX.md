@@ -6,7 +6,7 @@
 What works without a Mac, what was measured, and what is still open. Fork-only; upstream builds on a
 Mac with `.github/workflows/build-ipa.yml`, which this leaves alone and uses as the reference.
 
-Last measured 2026-11-13 on `BCD 0.1.653`, with Swift 6.4.2 and the iOS 27.1 SDK.
+Last measured 2026-11-13 on `BCD 0.1.653`, with Swift 6.4.2 (clang 21) and the iOS 27.1 SDK.
 
 ## What the host needs
 
@@ -21,6 +21,10 @@ None of it is installed, changed or reset by anything in this repository.
 `BCD_XT` names the command that runs its arguments in the Swift image with the current directory
 mounted (default `~/ios-toolchain/xt`). `BCD_XSD` names `x86sim` for one device, chosen by
 `XS_DEVICE` (default `~/ios-toolchain/xsd`).
+
+Building BCD itself uses an image of its own, made by `tools/linux/bx image` from the Swift image, which
+adds the build tools the workflow takes from Homebrew, Rust and rcodesign. `BCD_SDK_HOME` names the home
+directory that holds the SDK bundle (default `~/ios-toolchain/home`), mounted read-only.
 
 The SDK and Xcode are Apple's, under Apple's licence, which speaks of Apple-branded computers.
 Whether to use them elsewhere is for whoever does. Nothing from them is committed here.
@@ -86,26 +90,71 @@ It is a workaround and says so at length: nothing is rebuilt, and every behaviou
 "apps linked before iOS 27" changes at once in a program compiled against older headers. It refuses
 to write an IPA whose identifiers are not BCD's three.
 
-## Building BCD itself: where it stands
+## Building BCD itself
 
-In the order ANAL-420 set.
+A whole BCD has been built on Linux from this tree: `com.thebcd69.bcd` 0.1.653 (653), its two extensions,
+main program stamped SDK 27.1. Installed over upstream's 0.1.653 on vphone it starts, fills the inner
+display (`screen=1398x2034@3.0x`), keeps the app's data, and reports its sideload entitlements present
+(`increased-memory-limit: true`, `extended-virtual-addressing: true`). No game has been run with it:
+vphone has no JIT pairing and no store account. That is for a real phone.
 
-1. **The preview app: done.** Builds, runs on x86Code's phones and on vphone.
-2. **The app's own sources against the iOS 27 SDK: the Swift half is answered.** All 313 Swift files
-   under `app/Madeira` type-check for `arm64-apple-ios18.0` against the iOS 27.1 SDK, with the
-   bridging header and `-D BCD_SDK_IOS27_1` (the condition `project.pbxproj` sets for that SDK), with
-   no error. The Objective-C and C files were not compiled; they need the FEX submodule's generated
-   headers.
-3. **The native libraries: not started.** The main program is one 92.6 MB file that has Wine's Unix
-   side, FEX and DXMT linked into it, so no change to the app's interface reaches a phone without
-   all of them. What the workflow does for them that Linux has no direct answer for:
-   - `xcrun -sdk macosx metal`: Apple's Metal shader compiler, for DXMT's shaders.
-   - `xcodebuild` for the app itself. Replaceable by the direct compile and link above; the asset
-     catalog (`Assets.car`) would need `actool` or to be taken from a built IPA.
-   - `app/Madeira/d3d12/libmetalirconverter.dylib`, Apple's Metal Shader Converter library. The
-     workflow fails without it, and it is not in this public tree (`tools/export-public.py` leaves
-     it out). This blocks a from-source build on a Mac too, not only on Linux.
-   The rest is cross-compiling C and C++ with clang, llvm-mingw, meson and cmake, which is work, not
-   a wall.
-4. **Packaging: not started.** vphone installs an unsigned IPA and signs it in the guest; a person's
-   phone gets it through their sideloader.
+### How
+
+    export BCD_UPSTREAM_IPA=/path/to/BCD-0.1.653.ipa    # a Mac-built BCD of the same build number
+    tools/linux/bx image                                 # once: the build image
+    git submodule update --init --depth 1 FEX wine dxmt madeira-dock
+    git -C dxmt submodule update --init --depth 1        # and FEX's own: see below
+    tools/linux/run-workflow.py run                      # build-ipa.yml's steps, in order
+    tools/linux/bx python3 tools/linux/package.py        # build-out/BCD-<version>-sdk<sdk>-linux-unsigned.ipa
+
+`tools/linux/run-workflow.py` runs the `run:` scripts of `.github/workflows/build-ipa.yml`, unchanged and
+in order, in the build image, with stand-ins on the PATH for commands only a Mac has (`tools/linux/shims`).
+The workflow stays the one description of the build. A step that succeeded is remembered and skipped the
+next time; `list`, `show N`, `--only N --redo` and `--keep-going` are there for working on one step.
+Summed from the steps' own times, a build from nothing is 20 to 30 minutes on a 32-thread machine; it has not been timed as one run.
+
+FEX's submodules: all except its three test-binary repositories and `range-v3`'s documentation branch,
+which are large and not built (`git -C FEX submodule update --init --depth 1 External/{fmt,xxhash,range-v3,unordered_dense,rpmalloc,jemalloc_glibc,vixl,zydis,tracy,Vulkan-Headers,drm-headers,Catch2} Source/Common/cpp-optparse`,
+then `git -C FEX/External/zydis submodule update --init --depth 1`).
+
+### What stands in for a Mac
+
+Each of these is a named, deliberate difference. None is hidden in a script.
+
+| On a Mac | On Linux | Where |
+|---|---|---|
+| Apple's clang | The open clang 21 from the Swift image, told the triple, the SDK and the linker. Compiles C with common symbols, as Apple's clang does. | `shims/clang` |
+| Apple's `ld` | lld from xtool's SDK bundle. Signs iOS output ad hoc, and links three zero-filled Wine globals that the server and ntdll both define as one, as Apple's linker evidently does (upstream's Mac build links the same sources). The names are printed at every link. | `shims/ld64.lld` |
+| `xcodebuild archive` | A reader of `project.pbxproj` that compiles, links, copies and runs what the project's three targets say. Swift is compiled a module at a time; headers are found by `-I`, not a header map. | `tools/linux/xcodebuild.py` |
+| `actool` (asset catalog) | **Not done.** `Assets.car` and the icon files are taken from `$BCD_UPSTREAM_IPA`. | `xcodebuild.py` |
+| `xcrun metal`, `metallib` | **Not done.** No Linux build of Apple's Metal compiler exists. DXMT's four shaders are handed back as a Mac build of the same build number compiled them, read out of `$BCD_UPSTREAM_IPA`. Right only while those four `.metal` files are unchanged; the tool refuses another build number. | `shims/metal`, `tools/linux/shaders-from-ipa.py` |
+| `codesign --sign -` | `rcodesign` (ad hoc, with the sideload entitlements). | `shims/codesign` |
+| llvm-mingw for macOS | The same release built for Linux, SHA-256 checked. | `tools/linux/fetch-llvm-mingw.sh` |
+| `xcrun`, `libtool`, `lipo`, `PlistBuddy`, `plutil`, `ditto`, `dyld_info`, `sysctl`, `brew`, BSD `sed -i ''` | Small stand-ins that do what the build asks of each and refuse anything else. | `tools/linux/shims` |
+
+Apple's Metal Shader Converter library (`app/Madeira/d3d12/libmetalirconverter.dylib`) is not in this
+public tree and the build stops without it. `tools/linux/converter-from-ipa.py` takes it out of
+`$BCD_UPSTREAM_IPA`. The app's own build signs that library ad hoc, which changes its bytes, so
+`build/madeira-d3d12/deps.sh` now also accepts the library exactly as released (releases 0.1.634 and
+0.1.653 carry byte-identical copies). It is Apple's, under Apple's agreement
+(`app/Madeira/d3d12/NOTICE.txt`), listed in `.gitignore`, and never committed.
+
+### What the Linux build does not have yet
+
+- **MoltenVK** (`gl/libMoltenVK.dylib`): upstream builds it with its Xcode projects. Missing, so the
+  desktop-OpenGL path (Zink) and Windows Vulkan do not work in this build. Direct3D 9 to 12 do not use it.
+- **`d3d8to9.dll`, `cnc-ddraw.dll`**: their steps refuse because `third-party/` in this public tree lacks
+  two files their checksum lists name. Not a Linux matter: the same would happen on a Mac from this tree.
+- **`7zFM.exe`**: its sources include `CommCtrl.h`, which only a case-insensitive file system finds. The
+  tracked program is kept, as the step does on any failure.
+- **The workflow's 523 "Check" steps** are not run by default (`--checks`); several compile and run engine
+  code on the build machine with macOS headers.
+- **Microsoft's Visual C++ runtime** is fetched by the workflow into the bundle and left out of the
+  package, as in upstream's public IPAs; the app downloads it on the device.
+
+### What is not known
+
+- Whether a game runs. Everything up to the app's interface is verified on vphone; the engine is not.
+- Whether Apple's clang and the open clang differ in some other default that matters to Wine or FEX. Two
+  were found by the link failing (common symbols, merged zero-filled globals); a difference that links
+  cleanly would not have shown.
