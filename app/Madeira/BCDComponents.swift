@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): BCDSideStrip and the clip beside a side strip (the iPhone Duo's outer display).
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
 import SwiftUI
@@ -40,6 +41,35 @@ extension EnvironmentValues {
 }
 
 private struct BCDHintBarKey: EnvironmentKey { static let defaultValue = false }
+
+/// A strip at one side of the window that iOS keeps for itself (pure: tests/host/check-duo-layout.py compiles it). The iPhone
+/// Duo's outer display has one about 83 pt wide for the clock and the status icons: at the trailing side upright, at the leading
+/// side when the phone lies on its side (Xcode 27.2's simulator, 2026-11-13), and the native Duo interface's tab rail stands in
+/// it. It is told from the safe area alone, with no model identifier: at least `minimum` points on one side and less than half
+/// of that on the other. An iPhone on its side has the same inset on both sides (47 to 62 pt, the Dynamic Island's), upright it
+/// has none, and an iPad has none, so none of them has a strip.
+enum BCDSideStrip {
+    static let minimum: CGFloat = 70
+
+    static func present(leading: CGFloat, trailing: CGFloat) -> Bool {
+        let wide = max(leading, trailing), other = min(leading, trailing)
+        return wide >= minimum && other < wide / 2
+    }
+}
+
+/// The view's own width and any height: what may be drawn beside a side strip.
+private struct BCDSideStripShape: Shape {
+    func path(in rect: CGRect) -> Path { Path(rect.insetBy(dx: 0, dy: -4000)) }
+}
+
+extension View {
+    /// Where the window has a side strip (BCDSideStrip), nothing of this view is drawn past its left and right edges: a row
+    /// that scrolls sideways and shows through its own edges (Home's recent games, for their glow) stopped under the clock and
+    /// under the tab rail on the iPhone Duo. Without a strip the view is as it was.
+    @ViewBuilder func bcdClipsAtSideStrip(_ insets: EdgeInsets) -> some View {
+        if BCDSideStrip.present(leading: insets.leading, trailing: insets.trailing) { clipShape(BCDSideStripShape()) } else { self }
+    }
+}
 
 /// A game's picture in one of the stores' shapes, with the placeholder (the game's colours,
 /// its initial and title) for a game no store has a picture of, such as one added from Files.

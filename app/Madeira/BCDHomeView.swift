@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the recent games' row stops at the page's edge beside a side strip (the iPhone Duo's outer display).
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
@@ -77,6 +78,9 @@ struct BCDHomeView: View {
             .onChange(of: focus.controllerActive) { _, _ in homeScrollSection = nil; revealHome(verticalScroll) }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in homeScrollSection = nil; revealHome(verticalScroll) }
             }
+            // The recent games' row draws through its own edges (scrollClipDisabled, for the cards' glow): beside the iPhone Duo's
+            // side strip it stops at the page's edge.
+            .bcdClipsAtSideStrip(proxy.safeAreaInsets)
         }
         .bcdGamePage($opened, from: "Home")
         .onChange(of: store.windowsRunning) { _, running in

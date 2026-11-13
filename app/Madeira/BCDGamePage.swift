@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the page's arrangement on a phone held sideways under 640 pt wide (the iPhone Duo's outer display).
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
@@ -2045,7 +2046,8 @@ struct BCDGamePage: View {
     }
 
     private func factRow(_ fact: BCDGameFact, _ m: BCDGamePageMetrics, link: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        // The gap is 12 + 8 + 12 pt as it always was; a narrow page (BCDGamePageRoom) closes it to 12.
+        HStack(alignment: .firstTextBaseline, spacing: (m.factGap - 8) / 2) {
             Text(fact.label).font(BCDStyle.body(m.pad ? 15 : 13)).foregroundStyle(BCDStyle.textSoft)
             Spacer(minLength: 8)
             Text(fact.value).font(BCDStyle.label(m.pad ? 15 : 13)).multilineTextAlignment(.trailing).lineLimit(2)
@@ -2097,6 +2099,20 @@ struct BCDGamePage: View {
 }
 
 /// Sizes for each layout: a phone on its side, an upright phone, an iPad either way.
+/// The game page on a phone held sideways with less room than any ordinary iPhone gives it (pure: tests/host/check-duo-layout.py
+/// compiles it). The narrowest of those is 667 pt (an iPhone SE); the iPhone Duo's outer display is 678 pt less the 83 pt its
+/// clock takes, 595 pt, and it is 466 pt tall where the others have 375 to 440. With the 214 pt facts card the main column had
+/// 319 pt: Play and Options were put on one row that needed 330 ("Opt…" in the first Duo pictures), and the card wrapped
+/// "External drive" and "64-bit · Direct3D 11". There the card is as wide as on a large phone, its names and values stand 12 pt
+/// apart, not 32, and the actions go one under the other, which the height has room for. 640 pt and wider are as they were.
+enum BCDGamePageRoom {
+    static let narrowBelow: CGFloat = 640
+    static let narrowFacts: CGFloat = 236
+    static let narrowFactGap: CGFloat = 12
+
+    static func narrow(width: CGFloat) -> Bool { width > 0 && width < narrowBelow }
+}
+
 private struct BCDGamePageMetrics {
     let layout: BCDLayout
     let size: CGSize
@@ -2108,7 +2124,11 @@ private struct BCDGamePageMetrics {
     var upright: Bool { size.height > size.width }
     var gutter: CGFloat { pad ? 36 : 20 }
     var columnGap: CGFloat { pad ? 36 : 22 }
-    var factsWidth: CGFloat { pad ? 320 : (size.width < 700 ? 214 : 236) }
+    /// A phone on its side with less width than any ordinary iPhone has there (BCDGamePageRoom): the iPhone Duo's outer display.
+    var narrow: Bool { !pad && !upright && BCDGamePageRoom.narrow(width: size.width) }
+    var factsWidth: CGFloat { pad ? 320 : narrow ? BCDGamePageRoom.narrowFacts : (size.width < 700 ? 214 : 236) }
+    /// Between a fact's name and its value, at the least.
+    var factGap: CGFloat { narrow ? BCDGamePageRoom.narrowFactGap : 32 }
     var mainColumn: CGFloat { max(260, size.width - 2 * gutter - factsWidth - columnGap) }
     var titleSize: CGFloat { pad ? 46 : 32 }
     var logoWidth: CGFloat { pad ? 480 : (upright ? 300 : 320) }

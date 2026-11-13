@@ -92,6 +92,7 @@ jobs:
           python3 tests/host/check-bcd-foldable.py --require-swift
           python3 tests/host/check-duo-controller-navigation.py
           python3 tests/host/check-duo-download-session.py
+          python3 tests/host/check-duo-layout.py --require-swift
 
       - name: Photograph the interface BCD has today
         if: always()
