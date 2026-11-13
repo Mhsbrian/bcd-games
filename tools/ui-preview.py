@@ -4,6 +4,7 @@
 # BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
 # Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 # Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
+# Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a simulator with two displays (iPhone Duo) is photographed once per display.
 """Build BCD's interface for the simulator and photograph it on many device sizes.
 
 The preview app is the app's BCD*.swift interface files (the ones that never touch the
@@ -32,6 +33,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -366,24 +368,57 @@ def shoot(app, device, udid, screens, orients, focus_all, empty, out, press=None
             first = False
             name = (f"{device.replace(' ', '_').replace('(', '').replace(')', '')}--{screen}{'--ring-' + ring if ring else ''}"
                     f"{'--' + press.replace(',', '-') if press else ''}{'--stage-' + stage.replace(':', '-').replace(',', '-') if stage else ''}{'--scene-width-' + str(scene_width).replace(':', '-') if scene_width else ''}{'--duo' if duo else ''}--{orient}.png")
-            run(["xcrun", "simctl", "io", udid, "screenshot", str(out / name)])
+            names = screenshot(udid, out, name)
             subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True)
             try:
                 console.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 console.kill()
-            if orient == "landscape":
-                # simctl saves the panel as mounted (portrait); turn it the way the app stands.
-                run(["sips", "-r", "270", str(out / name)])
-            if stage:
-                # The window stands in the middle of the screen: keep only it (an iPad is 2x).
-                w, h = (float(v) for v in stage.partition(":")[0].lower().split("x"))
-                run(["sips", "--cropToHeightWidth", str(int(h * 2)), str(int(w * 2)), str(out / name)])
-            shots.append(out / name)
-            print(f"  {name}")
+            for name in names:
+                if orient == "landscape":
+                    # simctl saves the panel as mounted (portrait); turn it the way the app stands.
+                    run(["sips", "-r", "270", str(out / name)])
+                if stage:
+                    # The window stands in the middle of the screen: keep only it (an iPad is 2x).
+                    w, h = (float(v) for v in stage.partition(":")[0].lower().split("x"))
+                    run(["sips", "--cropToHeightWidth", str(int(h * 2)), str(int(w * 2)), str(out / name)])
+                shots.append(out / name)
+                print(f"  {name}")
     subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True)
     subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True)
     return shots
+
+
+def displays(text):
+    """The displays simctl lists when it cannot choose one: [(id, "1398x2034"), ...].
+
+    A simulator with two screens (iPhone Duo) refuses `simctl io screenshot` without --display and names them:
+        --display=3  LCD-1 (primary-1) 2007x2853
+        --display=1  LCD (primary) 1398x2034
+    """
+    return re.findall(r"--display=(\d+)\s.*?(\d+x\d+)\s*$", text, re.M)
+
+
+def screenshot(udid, out, name):
+    """One PNG of the simulator's screen, or one per display when it has several (the size is put in the name).
+    Returns the names saved. A display that is off (the outer one of an unfolded phone) gives no picture and is said so."""
+    r = subprocess.run(["xcrun", "simctl", "io", udid, "screenshot", str(out / name)], capture_output=True, text=True)
+    if r.returncode == 0:
+        return [name]
+    found = displays(r.stderr + r.stdout)
+    if not found:
+        sys.exit(f"ui-preview: xcrun simctl io {udid} screenshot failed:\n{(r.stderr or r.stdout)[-3000:]}")
+    saved = []
+    for number, size in found:
+        each = name[:-len(".png")] + f"--display-{size}.png"
+        r = subprocess.run(["xcrun", "simctl", "io", udid, "screenshot", f"--display={number}", str(out / each)], capture_output=True, text=True)
+        if r.returncode == 0 and (out / each).exists():
+            saved.append(each)
+        else:
+            print(f"  (display {number}, {size}: no picture: {(r.stderr or r.stdout).strip().splitlines()[-1:] or ['no output']})")
+    if not saved:
+        sys.exit(f"ui-preview: none of the simulator's {len(found)} displays gave a picture")
+    return saved
 
 
 def _try_lock(f):
