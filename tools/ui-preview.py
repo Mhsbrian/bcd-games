@@ -4,7 +4,7 @@
 # BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
 # Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 # Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
-# Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a simulator with two displays (iPhone Duo) is photographed once per display.
+# Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a simulator with two displays (iPhone Duo) is photographed once per display, and a landscape picture that is already wider than tall is not turned.
 """Build BCD's interface for the simulator and photograph it on many device sizes.
 
 The preview app is the app's BCD*.swift interface files (the ones that never touch the
@@ -375,8 +375,9 @@ def shoot(app, device, udid, screens, orients, focus_all, empty, out, press=None
             except subprocess.TimeoutExpired:
                 console.kill()
             for name in names:
-                if orient == "landscape":
-                    # simctl saves the panel as mounted (portrait); turn it the way the app stands.
+                if orient == "landscape" and upright_panel(out / name):
+                    # simctl saves the panel as mounted (portrait); turn it the way the app stands. The iPhone Duo's
+                    # simulator already saves a landscape screen wider than tall, and is left as it is.
                     run(["sips", "-r", "270", str(out / name)])
                 if stage:
                     # The window stands in the middle of the screen: keep only it (an iPad is 2x).
@@ -397,6 +398,14 @@ def displays(text):
         --display=1  LCD (primary) 1398x2034
     """
     return re.findall(r"--display=(\d+)\s.*?(\d+x\d+)\s*$", text, re.M)
+
+
+def upright_panel(path):
+    """Whether a saved picture is taller than wide (the panel as mounted), read from the PNG's header."""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    return height > width
 
 
 def screenshot(udid, out, name):
