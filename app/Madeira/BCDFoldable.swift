@@ -3,6 +3,7 @@
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 Henrique Rocha (iqui27): the iPhone Duo tabletop pose, from thebcd69/bcd-games pull request #31; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a simulator's model identifier is read from SIMULATOR_MODEL_IDENTIFIER, and the inner display's points are the measured 951 x 669.
 
 import Foundation
 import CoreGraphics
@@ -38,8 +39,13 @@ enum BCDFoldableDevice {
 
     static func isFoldable(machine: String) -> Bool { identifiers.contains(machine) }
 
-    /// The model identifier `uname` reports ("iPhone19,4"; "arm64" in the simulator).
+    /// The model identifier `uname` reports ("iPhone19,4"). A simulator's `uname` says "arm64" (or "x86_64"); the model it stands
+    /// for is in its environment as SIMULATOR_MODEL_IDENTIFIER, and Xcode 27.2's iPhone Duo simulator says "iPhone19,4" there
+    /// (the fork's Duo preview workflow, 2026-11-13). Only a simulator build reads the environment: on a device it is `uname` alone.
     static let machine: String = {
+#if targetEnvironment(simulator)
+        if let model = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], !model.isEmpty { return model }
+#endif
         var info = utsname()
         uname(&info)
         return withUnsafePointer(to: &info.machine) {
@@ -126,11 +132,12 @@ enum BCDFoldable {
     static let active: Bool = BCDFoldableSwitch.gate(machine: BCDFoldableDevice.machine, stored: BCDFoldableSwitch.stored)
 
     /// The inner display, in landscape. Apple's specification: 1878 x 2670 pixels at 430 ppi (the outer display:
-    /// 1398 x 2034 at 460 ppi, 1.455:1 against the inner 1.422:1). The points are those pixels at 3x; only the shape
-    /// is used (a new library entry's default Resolution), so a scale of 2.8 (the App Store Connect screenshot size
-    /// of the inner display, 2007 x 2853, would make it 951 x 669 pt) gives the same shape.
+    /// 1398 x 2034 at 460 ppi, 1.455:1 against the inner 1.422:1). The points are what iOS reports: 951 x 669 at 3x, in a tester's
+    /// log from a real phone (QC1TBD, above) and on Xcode 27.2's iPhone Duo simulator, whose inner display is 2007 x 2853 pixels
+    /// (2026-11-13; before that this said 890 x 626, the specification's pixels at 3x). Only the shape is used (a new library
+    /// entry's default Resolution), and both sizes have the same 1.42:1 shape.
     static let innerPixels = CGSize(width: 2670, height: 1878)
-    static let innerPoints = CGSize(width: 890, height: 626)
+    static let innerPoints = CGSize(width: 951, height: 669)
 
     /// The screen shape a new entry's default Resolution is made from (ResolutionChoices.screen): the inner display's,
     /// whichever screen BCD started on (UIScreen.main is ambiguous on a two-display phone, Apple says); nil when the gate

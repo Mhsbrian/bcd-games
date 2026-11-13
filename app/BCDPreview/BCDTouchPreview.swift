@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the size the sample controls were laid out for is printed for the preview tool.
 
 import SwiftUI
 import UIKit
@@ -235,6 +236,9 @@ private struct BCDTouchPreviewCase: View {
                         held: spec == "touch" ? ["A": .zero, "LS": CGSize(width: 0.72, height: -0.69)] : [:],
                         select: spec == "touch-editor" ? "Y" : nil, custom: custom)
         if spec == "touch-look" || spec == "touch-text" { model.selected = model.items.first { $0.customText == "INV" }?.id }
+        // For tools/ui-preview.py's log: the size the sample was laid out for (the first iPhone Duo pictures showed a landscape
+        // screen with the upright screen's layout).
+        print(String(format: "BCDPreview: geometry touch laid out for %.0fx%.0f", screen.width, screen.height)); fflush(stdout)
     }
 
     private var editing: Bool { spec == "touch-editor" || spec == "touch-layouts" || spec == "touch-look" || spec == "touch-text" }

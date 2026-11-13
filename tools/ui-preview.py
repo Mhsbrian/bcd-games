@@ -368,6 +368,11 @@ def shoot(app, device, udid, screens, orients, focus_all, empty, out, press=None
             first = False
             name = (f"{device.replace(' ', '_').replace('(', '').replace(')', '')}--{screen}{'--ring-' + ring if ring else ''}"
                     f"{'--' + press.replace(',', '-') if press else ''}{'--stage-' + stage.replace(':', '-').replace(',', '-') if stage else ''}{'--scene-width-' + str(scene_width).replace(':', '-') if scene_width else ''}{'--duo' if duo else ''}--{orient}.png")
+            # What the app says its window is (app/BCDPreview/BCDPreviewApp.swift, reportGeometry): the only reading of a
+            # simulator's safe area and size classes there is.
+            for line in log.read_text(errors="ignore").splitlines():
+                if line.startswith("BCDPreview: geometry"):
+                    print(f"  [{screen} {orient}] {line[len('BCDPreview: '):]}")
             names = screenshot(udid, out, name)
             subprocess.run(["xcrun", "simctl", "terminate", udid, BUNDLE_ID], capture_output=True)
             try:
