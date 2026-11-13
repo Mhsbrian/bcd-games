@@ -129,6 +129,7 @@ Each of these is a named, deliberate difference. None is hidden in a script.
 | `actool` (asset catalog) | **Not done.** `Assets.car` and the icon files are taken from `$BCD_UPSTREAM_IPA`. | `xcodebuild.py` |
 | `xcrun metal`, `metallib` | **Not done.** No Linux build of Apple's Metal compiler exists. DXMT's four shaders are handed back as a Mac build of the same build number compiled them, read out of `$BCD_UPSTREAM_IPA`. Right only while those four `.metal` files are unchanged; the tool refuses another build number. | `shims/metal`, `tools/linux/shaders-from-ipa.py` |
 | `codesign --sign -` | `rcodesign` (ad hoc, with the sideload entitlements). | `shims/codesign` |
+| MoltenVK's Xcode build | **Not done.** The Mac-built library of the pinned version is staged from `$BCD_UPSTREAM_IPA`. | `tools/linux/moltenvk-from-ipa.py` |
 | llvm-mingw for macOS | The same release built for Linux, SHA-256 checked. | `tools/linux/fetch-llvm-mingw.sh` |
 | `xcrun`, `libtool`, `lipo`, `PlistBuddy`, `plutil`, `ditto`, `dyld_info`, `sysctl`, `brew`, BSD `sed -i ''` | Small stand-ins that do what the build asks of each and refuse anything else. | `tools/linux/shims` |
 
@@ -141,10 +142,13 @@ public tree and the build stops without it. `tools/linux/converter-from-ipa.py` 
 
 ### What the Linux build does not have yet
 
-- **MoltenVK** (`gl/libMoltenVK.dylib`): upstream builds it with its Xcode projects. Missing, so the
-  desktop-OpenGL path (Zink) and Windows Vulkan do not work in this build. Direct3D 9 to 12 do not use it.
+- **MoltenVK from source** (`gl/libMoltenVK.dylib`): upstream builds it with MoltenVK's own Xcode projects.
+  Until it is built here, `tools/linux/moltenvk-from-ipa.py` stages the Mac-built library of the pinned
+  version (v1.4.2, Apache-2.0, unmodified by BCD) and its licence texts from `$BCD_UPSTREAM_IPA`.
 - **`d3d8to9.dll`, `cnc-ddraw.dll`**: their steps refuse because `third-party/` in this public tree lacks
   two files their checksum lists name. Not a Linux matter: the same would happen on a Mac from this tree.
+  With the 32-bit `winscard.dll` and three README files, these are the only files upstream's 0.1.653 IPA
+  has that this build's does not (1,342 files against 1,336, signatures aside).
 - **`7zFM.exe`**: its sources include `CommCtrl.h`, which only a case-insensitive file system finds. The
   tracked program is kept, as the step does on any failure.
 - **The workflow's 523 "Check" steps** are not run by default (`--checks`); several compile and run engine

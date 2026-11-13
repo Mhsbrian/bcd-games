@@ -51,6 +51,8 @@ SHIMS = ROOT / "tools" / "linux" / "shims"
 NOT_ON_LINUX = {
     "Select newest Xcode": "picks among the Xcodes installed on a Mac; the SDK here is the one tools/linux/bx mounts",
     "Sign for OTA install (private bucket)": "signs and uploads with upstream's secrets; not for a fork",
+    "Build MoltenVK for iOS":
+        "built with MoltenVK's Xcode projects; tools/linux/moltenvk-from-ipa.py stages a Mac-built copy before Mesa",
     "Package Madeira and Madeira2 unsigned IPAs":
         "makes a second app (com.thebcd69.bcd2) as well; the fork packages the one app with tools/linux/package.py",
     "Use public Metal atomics when the compiler needs them (Xcode 27)":
@@ -65,6 +67,8 @@ BEFORE = {
     # Apple's Metal compiler has no Linux build: its stand-in (tools/linux/shims/metal) hands back the four
     # compiled shaders of a Mac build of this version, which this takes out of that build's IPA.
     "Ensure Metal compiler": ["python3", "tools/linux/shaders-from-ipa.py", "{ipa}"],
+    # MoltenVK is not built on Linux yet (its build is Xcode projects): the same version, Mac-built.
+    "Build Mesa OSMesa + Zink for iOS": ["python3", "tools/linux/moltenvk-from-ipa.py", "{ipa}"],
     # Apple's library, which the public tree does not carry and the workflow stops without.
     "Locate Metal Shader Converter headers": ["python3", "tools/linux/converter-from-ipa.py", "{ipa}"],
 }

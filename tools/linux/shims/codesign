@@ -11,6 +11,7 @@ A bundle is signed shallowly, because fakesign signs what is nested first, each 
 Signing with an identity, verifying and displaying are refused: there is no keychain here.
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -32,7 +33,7 @@ while i < len(args):
 if identity != "-" or not paths:
     sys.exit("codesign stand-in: only an ad-hoc signature is possible here (--sign -)")
 for path in paths:
-    command = ["rcodesign", "sign"]
+    command = [shutil.which("rcodesign") or "/opt/rcodesign/bin/rcodesign", "sign"]
     if entitlements:
         command += ["--entitlements-xml-file", entitlements]
     if os.path.isdir(path):
