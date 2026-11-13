@@ -262,3 +262,7 @@ app/Madeira/vulkan/arm64ec-windows/
 
 # Linux preview builds and screenshots (tools/linux/preview.py); the sample art in them is never committed.
 /out/
+
+# Apple's Metal Shader Converter library: Apple's, under Apple's agreement, never committed in this fork
+# (tools/linux/converter-from-ipa.py puts it here for a local build).
+/app/Madeira/d3d12/libmetalirconverter.dylib

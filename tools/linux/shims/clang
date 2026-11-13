@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# clang, clang++, cc, c++, gcc, g++: the image's clang. Asked for an Apple target (an -arch, an Apple
+# triple, an -isysroot of an Apple SDK, a minimum-iOS flag, or run through xcrun for an iOS SDK), it is
+# given what Apple's clang works out by itself on a Mac: the triple, the SDK and a linker that links Mach-O.
+. "$(dirname "$0")/_env.sh"
+# The real compiler by its versioned name: in the build image /usr/bin/clang itself hands over to this file.
+real=(/usr/bin/clang-21)
+case $(basename "$0") in *++) real+=(--driver-mode=g++) ;; esac
+apple= ; target= ; sysroot= ; min= ; arch=arm64; mac=
+prev=
+for a in "$@"; do
+    case $prev in -arch) arch=$a; apple=1 ;; -isysroot) sysroot=$a; case $a in *.sdk|*.sdk/) apple=1 ;; esac ;; -target|--target) target=$a ;; esac
+    case $a in
+        --target=*) target=${a#--target=} ;;
+        -miphoneos-version-min=*|-mios-version-min=*) min=${a#*=}; apple=1 ;;
+        -mmacosx-version-min=*|-mmacos-version-min=*) mac=1; apple=1 ;;
+    esac
+    prev=$a
+done
+case $target in *apple*) apple=1 ;; esac
+case ${BCD_XCRUN_SDK:-} in iphoneos*|iphonesimulator*) apple=1 ;; macosx*) apple=1; mac=1 ;; esac
+case $sysroot in *MacOSX*) mac=1 ;; esac
+# A program for the build machine: linked with lld. The image's default linker (gold) prints warnings on
+# sanitizer builds that the host checks read as failures.
+hostld=(--start-no-unused-arguments -fuse-ld=lld --end-no-unused-arguments)
+case " $* " in *" -fuse-ld="*|*" --ld-path="*) hostld=() ;; esac
+[ -n "$apple" ] || exec "${real[@]}" "${hostld[@]}" "$@"
+# "For macOS" on the Mac runner means "for the machine doing the build": a helper program the build runs.
+# Here that machine is Linux, so such a program is built for Linux, without the Mac-only flags.
+case $target in *apple*) ;; *)
+    if [ -n "$mac" ]; then
+        host=(); skip=
+        for a in "$@"; do
+            if [ -n "$skip" ]; then skip=; continue; fi
+            case $a in
+                -isysroot|-arch) skip=1 ;;
+                -mmacosx-version-min=*|-mmacos-version-min=*|-isysroot*) ;;
+                -framework) skip=1 ;;
+                *) host+=("$a") ;;
+            esac
+        done
+        exec "${real[@]}" "${hostld[@]}" "${host[@]}"
+    fi ;;
+esac
+extra=()
+if [ -z "$target" ]; then
+    if [ -n "$mac" ]; then extra+=(--target=$arch-apple-macosx); else extra+=(--target=$arch-apple-ios${min:-${IPHONEOS_DEPLOYMENT_TARGET:-17.0}}); fi
+fi
+if [ -z "$sysroot" ]; then
+    if [ -n "$mac" ]; then extra+=(-isysroot "$(bcd_sdk_path macosx)"); else extra+=(-isysroot "$(bcd_sdk_path "${BCD_XCRUN_SDK:-iphoneos}")"); fi
+fi
+# The linker choice is no "unused argument" when this run only compiles (configure scripts build with -Werror for that).
+extra+=(--start-no-unused-arguments -fuse-ld=lld --ld-path="$(dirname "$0")/ld64.lld" --end-no-unused-arguments)
+exec "${real[@]}" "${extra[@]}" "$@"

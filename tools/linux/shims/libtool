@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# Apple's libtool is used as "libtool -static -o OUT.a IN...": llvm-libtool-darwin does that. Anything else
+# is GNU libtool's.
+case " $* " in
+    *" -static "*) exec /usr/lib/llvm-18/bin/llvm-libtool-darwin "$@" ;;
+    *) . "$(dirname "$0")/_env.sh"; exec env PATH="$(bcd_real_path)" libtool "$@" ;;
+esac

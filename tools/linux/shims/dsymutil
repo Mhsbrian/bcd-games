@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# clang runs dsymutil after it links a program from source with -g; the SDK bundle carries one.
+. "$(dirname "$0")/_env.sh"
+exec "$BCD_DARWIN/toolset/bin/dsymutil" "$@"

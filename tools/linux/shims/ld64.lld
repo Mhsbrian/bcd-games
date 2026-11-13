@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# The Mach-O linker from xtool's Darwin SDK bundle. It links for iOS but says on every run that it does
+# not support the platform; configure scripts read any linker output as a failed check, so that one line
+# is dropped and everything else it says is kept.
+. "$(dirname "$0")/_env.sh"
+# LLVM 15's CMake passes "-z defs" when the system is named iOS (HandleLLVMOptions.cmake excludes only
+# "Darwin"); lld's Mach-O linker stops on "-z". It is an ELF option with no meaning for Mach-O, so the pair
+# is dropped rather than failing the libraries that come after it in the build.
+args=(); skip=
+for a in "$@"; do
+    if [ -n "$skip" ]; then skip=; continue; fi
+    if [ "$a" = "-z" ]; then skip=1; continue; fi
+    args+=("$a")
+done
+"$BCD_LD64" "${args[@]}" 2> >(grep -v 'does not support linking for platform' >&2)
+code=$?
+wait
+exit $code

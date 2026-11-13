@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+#
+# Apple's Metal compiler and library tool (this file is also `metallib`) exist for macOS and Windows only.
+# This compiles nothing. For the four shader files DXMT has, it hands back the result a Mac build of the
+# same BCD version produced, which tools/linux/shaders-from-ipa.py took out of that build's IPA and says
+# at length why that is right only for unchanged shader sources. Asked for any other source, it fails.
+set -eu
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+STORE=$ROOT/out/shaders
+MARK="BCD-PREBUILT-SHADER"
+tool=$(basename "$0"); out=; inputs=()
+while [ $# -gt 0 ]; do
+    case $1 in
+        --version|-v) echo "$tool stand-in (no compiler; compiled shaders from a built BCD, tools/linux/shaders-from-ipa.py)"; exit 0 ;;
+        -o) out=$2; shift 2 ;;
+        -o*) out=${1#-o}; shift ;;
+        -*) shift ;;
+        *) inputs+=("$1"); shift ;;
+    esac
+done
+[ -n "$out" ] && [ ${#inputs[@]} -eq 1 ] || { echo "$tool stand-in: expected one input and -o OUT" >&2; exit 78; }
+in=${inputs[0]}
+if [ "$tool" = metal ]; then
+    name=$(basename "$in" .metal)
+    if [ -f "$STORE/$name.air" ]; then cp "$STORE/$name.air" "$out"; exit 0; fi
+    # A library's source: the store holds the finished library, so the object is a note for `metallib`.
+    if [ -f "$STORE/$name.metallib" ]; then printf '%s %s\n' "$MARK" "$name" > "$out"; exit 0; fi
+    echo "metal stand-in: no compiled shader for $in (run tools/linux/shaders-from-ipa.py; a changed or new shader needs Apple's compiler)" >&2
+    exit 78
+fi
+read -r mark name < "$in" 2>/dev/null || true
+if [ "${mark:-}" = "$MARK" ] && [ -f "$STORE/$name.metallib" ]; then cp "$STORE/$name.metallib" "$out"; exit 0; fi
+echo "metallib stand-in: $in is not a shader this stand-in can hand back as a library" >&2
+exit 78

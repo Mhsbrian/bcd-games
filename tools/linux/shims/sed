@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# BSD sed takes the backup suffix of -i as a separate argument ("sed -i '' ..."); GNU sed does not.
+args=(); prev=
+for a in "$@"; do
+    if [ "$prev" = "-i" ] && [ -z "$a" ]; then prev=; continue; fi
+    args+=("$a"); prev=$a
+done
+exec /usr/bin/sed "${args[@]}"
