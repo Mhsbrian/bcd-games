@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+#
+# Photographs BCD's interface on the iPhone Duo simulator, so a change to the Duo layout is looked at
+# before it reaches a device. It builds the preview app only (tools/ui-preview.py: the interface files
+# and sample data, compiled with swiftc; no engine, no signing material, no IPA) and uploads the PNGs.
+#
+# The Duo simulator ships with Xcode 27 (iOS 27.1 and 27.2 runtimes), which GitHub offers on the
+# `xcode-27` runner image. build-ipa.yml stays on its own runner and is not touched by this file.
+name: Duo preview (simulator screenshots)
+
+on:
+  workflow_dispatch:
+    inputs:
+      screens:
+        description: "Screens to photograph (tools/ui-preview.py --screens)"
+        default: "home,library,downloads,settings,settings.graphics,game,add,controllers,touch,ingame-menu,starting,overlay"
+      devices:
+        description: "Simulators to photograph (tools/ui-preview.py --devices)"
+        default: "iPhone Duo"
+      orient:
+        description: "Orientations"
+        default: "landscape,portrait"
+  pull_request:
+    paths:
+      - .github/workflows/duo-preview.yml
+      - tools/ui-preview.py
+      - app/BCDPreview/**
+      - app/Madeira/BCD*.swift
+      - app/Madeira/BCDThemes.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duo-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCREENS: ${{ inputs.screens || 'home,library,downloads,settings,settings.graphics,game,add,controllers,touch,ingame-menu,starting,overlay' }}
+  DEVICES: ${{ inputs.devices || 'iPhone Duo' }}
+  ORIENT: ${{ inputs.orient || 'landscape,portrait' }}
+  OUT: ${{ github.workspace }}/duo-preview-out
+
+jobs:
+  preview:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      # The interface sources and the preview tool live in this repository; no submodule is needed.
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode 27
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app
+          NEWEST=$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      # What the simulator says about itself goes into the log: the device type, its runtimes, its
+      # displays. A foldable has two screens, and which one `simctl io screenshot` saves is read
+      # here, not assumed.
+      - name: Describe the Duo simulator
+        run: |
+          set -uo pipefail
+          python3 tools/ui-preview.py --list
+          echo "-- device types --"
+          xcrun simctl list devicetypes | grep -i -E "duo|fold" || echo "(no device type named Duo or Fold)"
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          found = [d['udid'] for r, ds in sorted(json.load(sys.stdin)['devices'].items()) for d in ds if d['name'] == 'iPhone Duo']
+          print(found[-1] if found else '')")
+          if [ -z "$UDID" ]; then
+            echo "::warning::this runner has no simulator named iPhone Duo"
+            exit 0
+          fi
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "-- displays --"
+          xcrun simctl io "$UDID" enumerate || true
+          echo "-- model --"
+          xcrun simctl getenv "$UDID" SIMULATOR_MODEL_IDENTIFIER || true
+          echo "-- simctl subcommands that mention a fold or a posture --"
+          xcrun simctl help 2>&1 | grep -i -E "fold|postur|hinge" || echo "(none)"
+          xcrun simctl shutdown "$UDID" || true
+
+      # The rules behind the Duo interface, run on the host (the same checks build-ipa.yml runs).
+      - name: Check the foldable gate and the Duo controller navigation
+        run: |
+          python3 tests/host/check-bcd-foldable.py --require-swift
+          python3 tests/host/check-duo-controller-navigation.py
+          python3 tests/host/check-duo-download-session.py
+
+      - name: Photograph the interface BCD has today
+        if: always()
+        run: python3 tools/ui-preview.py --screens "$SCREENS" --devices "$DEVICES" --orient "$ORIENT" --out "$OUT/original"
+
+      - name: Photograph the native Duo interface
+        if: always()
+        run: python3 tools/ui-preview.py --duo --screens "$SCREENS" --devices "$DEVICES" --orient "$ORIENT" --out "$OUT/duo"
+
+      - name: Photograph the native Duo interface with a controller's focus ring
+        if: always()
+        run: python3 tools/ui-preview.py --duo --screens "home,library,settings" --press "down,right" --devices "$DEVICES" --orient "$ORIENT" --out "$OUT/duo-controller"
+
+      # ui-preview.py skips a simulator it cannot find and still exits 0: no picture is a failure here.
+      - name: Count the screenshots
+        if: always()
+        run: |
+          set -euo pipefail
+          N=$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')
+          echo "screenshots: $N"
+          find "$OUT" -name '*.png' | sort | while read -r f; do
+            echo "$(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/ {printf "%s ", $2}') ${f#$OUT/}"
+          done
+          echo "### Duo preview: $N screenshots" >> "$GITHUB_STEP_SUMMARY"
+          [ "$N" -gt 0 ] || { echo "::error::no screenshot was taken (is there a simulator named '$DEVICES'?)"; exit 1; }
+
+      # The sample library shows Steam's public store pictures, which belong to their publishers:
+      # they are in the artifact only and are never committed.
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duo-preview-${{ github.run_number }}
+          path: |
+            ${{ env.OUT }}/**/*.png
+          retention-days: 14
+          if-no-files-found: warn
