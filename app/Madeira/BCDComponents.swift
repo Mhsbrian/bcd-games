@@ -113,6 +113,8 @@ struct BCDGameLogo: View {
     var titleSize: CGFloat = 30
     var maxWidth: CGFloat = 260
     var maxHeight: CGFloat = 70
+    /// How many lines the name may take where there is no logo picture (`maxHeight` holds a picture, not the words).
+    var titleLines = 2
 
     var body: some View {
         if game.logoArt.isEmpty {
@@ -125,7 +127,7 @@ struct BCDGameLogo: View {
 
     private var title: some View {
         Text(game.title)
-            .font(BCDStyle.title(titleSize)).lineLimit(2).minimumScaleFactor(0.75)
+            .font(BCDStyle.title(titleSize)).lineLimit(titleLines).minimumScaleFactor(0.75)
             .multilineTextAlignment(.leading)
             .shadow(color: .black.opacity(0.35), radius: 6)
             .frame(maxWidth: maxWidth * 1.5, alignment: .leading)
