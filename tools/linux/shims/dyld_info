@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+# dyld_info -exports FILE: the export trie, read with llvm-objdump (same symbols, LLVM's layout).
+[ $# -eq 2 ] && [ "$1" = "-exports" ] || { echo "dyld_info stand-in: only '-exports FILE' is handled" >&2; exit 64; }
+echo "$2 [arm64]:"
+echo "    -exports:"
+/usr/lib/llvm-18/bin/llvm-objdump --macho --exports-trie "$2" | sed -n 's/^\(0x[0-9A-Fa-f]*\) *\(.*\)$/        \1  \2/p'

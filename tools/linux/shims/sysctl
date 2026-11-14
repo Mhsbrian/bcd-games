@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+case "$*" in
+    *hw.ncpu*|*hw.logicalcpu*|*hw.physicalcpu*|*hw.activecpu*) echo "${BCD_JOBS:-$(nproc)}" ;;
+    *hw.memsize*) awk '/MemTotal/ {print $2 * 1024}' /proc/meminfo ;;
+    *) echo "sysctl stand-in: '$*' is not handled" >&2; exit 64 ;;
+esac

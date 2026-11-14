@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+"""codesign --force --sign - [--entitlements FILE] PATH: an ad-hoc signature, written by rcodesign.
+
+The only signing BCD's build does without upstream's secrets is ad hoc ("--sign -"): on the bundled
+dylibs, and on the packaged app and its extensions with the entitlements a sideloader is to keep
+(tools/ota-variants.py fakesign). rcodesign (apple-codesign) writes the same kind of signature on Linux.
+A bundle is signed shallowly, because fakesign signs what is nested first, each with its own entitlements.
+Signing with an identity, verifying and displaying are refused: there is no keychain here.
+"""
+import os
+import shutil
+import subprocess
+import sys
+
+args = sys.argv[1:]
+identity, entitlements, paths, i = None, None, [], 0
+while i < len(args):
+    a = args[i]
+    if a in ("--sign", "-s"):
+        identity, i = args[i + 1], i + 2
+    elif a == "--entitlements":
+        entitlements, i = args[i + 1], i + 2
+    elif a in ("--force", "-f", "--generate-entitlement-der", "--deep") or a.startswith("--timestamp"):
+        i += 1
+    elif a.startswith("-"):
+        sys.exit(f"codesign stand-in: {a} is not handled (only an ad-hoc signature: --force --sign - [--entitlements FILE] PATH)")
+    else:
+        paths.append(a)
+        i += 1
+if identity != "-" or not paths:
+    sys.exit("codesign stand-in: only an ad-hoc signature is possible here (--sign -)")
+for path in paths:
+    command = [shutil.which("rcodesign") or "/opt/rcodesign/bin/rcodesign", "sign"]
+    if entitlements:
+        command += ["--entitlements-xml-file", entitlements]
+    if os.path.isdir(path):
+        command += ["--shallow"]
+    done = subprocess.run(command + [path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if done.returncode:
+        sys.stderr.write(done.stdout)
+        sys.exit(f"codesign stand-in: rcodesign could not sign {path}")
+    print(f"{path}: signed ad hoc" + (" with entitlements" if entitlements else ""))

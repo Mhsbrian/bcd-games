@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+"""The Mach-O linker: lld from xtool's Darwin SDK bundle, with five differences from Apple's ld smoothed.
+
+1. It says "This version of lld does not support linking for platform ..." on every run and links anyway.
+   Configure scripts read any linker output as a failed check, so that line is dropped.
+2. LLVM 15's CMake passes "-z defs" when the system is named iOS; lld's Mach-O linker stops on "-z", an
+   ELF option with no meaning here. The pair is dropped.
+3. Zero-filled globals defined twice. Wine's server and its ntdll each define native_machine,
+   server_start_time and supported_machines_count with "= 0", and BCD puts both in one program. Apple's
+   linker accepts that and gives them one storage (BCD's Mac build links these very sources); lld calls
+   them duplicate symbols. When a link fails ONLY on duplicates whose every definition is in
+   __DATA,__common, the later definition is marked weak in a private copy of its archive and the link is
+   run again, which gives the same result: one storage, the first definition's. Any other duplicate is
+   reported as lld reported it. That Apple's linker merges them is inferred from that build, not read
+   from Apple's sources; the names are printed every time so the list is visible.
+4. Ad-hoc signatures for iOS output (see main()).
+5. A section's alignment above the page size. lld gives a common symbol that records no alignment the
+   alignment of its size rounded up to a power of two, and writes the largest into the section header:
+   FFmpeg's ff_table_4_3_exp (32,828 bytes, a byte array) made BCD's __DATA,__common say 2^16. dyld on a
+   phone refuses that program when an app loads it with dlopen, as LiveContainer does ("align field
+   (1 << 16) that is too large for VM to support"; a real iPhone Duo, 2026-11-14). Apple's linker writes
+   2^14, the page size, for the same sources (upstream's 0.1.653). The header is put at the page size when
+   the section starts on a page boundary, which it then always does; nothing moves. See clamp_alignment().
+"""
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+DARWIN = os.environ.get("BCD_DARWIN", "/opt/darwin")
+LLD = os.path.join(DARWIN, "toolset/bin/orig/ld64.lld")
+LLVM = "/usr/lib/llvm-18/bin"
+NOISE = "does not support linking for platform"
+
+
+PAGE_ALIGN = 14   # 16 KB pages: arm64 iOS
+
+
+def clamp_alignment(path):
+    """Put every section's alignment that is above the page size at the page size, in the arm64 Mach-O at
+    `path`. Returns what was changed as text. A section that does not start on a page boundary is left
+    alone and reported, since lowering its header would then say something untrue."""
+    try:
+        with open(path, "rb") as f:
+            data = bytearray(f.read())
+    except OSError:
+        return []
+    if data[:4] != b"\xcf\xfa\xed\xfe":
+        return []
+    changed, at = [], 32
+    for _ in range(struct.unpack_from("<I", data, 16)[0]):
+        command, size = struct.unpack_from("<II", data, at)
+        if command == 0x19:   # LC_SEGMENT_64
+            section = at + 72
+            for _ in range(struct.unpack_from("<I", data, at + 64)[0]):
+                name = data[section + 16:section + 32].rstrip(b"\0").decode() + "," + data[section:section + 16].rstrip(b"\0").decode()
+                address, = struct.unpack_from("<Q", data, section + 32)
+                align, = struct.unpack_from("<I", data, section + 52)
+                if align > PAGE_ALIGN:
+                    if address % (1 << PAGE_ALIGN) == 0:
+                        struct.pack_into("<I", data, section + 52, PAGE_ALIGN)
+                        changed.append(f"{name} 2^{align} -> 2^{PAGE_ALIGN}")
+                    else:
+                        changed.append(f"{name} 2^{align} LEFT (it does not start on a page boundary)")
+                section += 80
+        at += size
+    if any("->" in c for c in changed):
+        with open(path, "wb") as f:
+            f.write(data)
+    return changed
+
+
+def link(args):
+    done = subprocess.run([LLD] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    err = "".join(line for line in done.stderr.splitlines(True) if NOISE not in line)
+    return done.returncode, done.stdout, err
+
+
+def nlists(data):
+    """(offset of each nlist_64, its name) of a thin 64-bit Mach-O object."""
+    if struct.unpack_from("<I", data, 0)[0] != 0xFEEDFACF:
+        return
+    count, at = struct.unpack_from("<I", data, 16)[0], 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, at)
+        if command == 0x2:
+            symoff, nsyms, stroff, _ = struct.unpack_from("<IIII", data, at + 8)
+            for i in range(nsyms):
+                entry = symoff + 16 * i
+                strx = struct.unpack_from("<I", data, entry)[0]
+                end = data.index(b"\0", stroff + strx)
+                yield entry, bytes(data[stroff + strx:end]).decode(errors="replace")
+        at += size
+
+
+def sections(data):
+    """Section number -> (segment, section) of a thin 64-bit Mach-O object."""
+    out, number = {}, 0
+    count, at = struct.unpack_from("<I", data, 16)[0], 32
+    for _ in range(count):
+        command, size = struct.unpack_from("<II", data, at)
+        if command == 0x19:
+            nsects = struct.unpack_from("<I", data, at + 64)[0]
+            for i in range(nsects):
+                base = at + 72 + 80 * i
+                number += 1
+                out[number] = (data[base + 16:base + 32].rstrip(b"\0").decode(), data[base:base + 16].rstrip(b"\0").decode())
+        at += size
+    return out
+
+
+def member(archive, name, work):
+    folder = tempfile.mkdtemp(dir=work)
+    subprocess.run([f"{LLVM}/llvm-ar", "x", archive, name], cwd=folder, check=True)
+    return os.path.join(folder, name)
+
+
+def in_common(path, symbol):
+    data = open(path, "rb").read()
+    names = sections(data)
+    for entry, name in nlists(data):
+        n_type, n_sect = data[entry + 4], data[entry + 5]
+        if name == symbol and n_type & 0x0E == 0x0E:      # defined in a section
+            return names.get(n_sect) == ("__DATA", "__common")
+    return False
+
+
+def weaken(path, symbol):
+    data = bytearray(open(path, "rb").read())
+    for entry, name in nlists(data):
+        if name == symbol and data[entry + 4] & 0x0E == 0x0E:
+            desc = struct.unpack_from("<H", data, entry + 6)[0]
+            struct.pack_into("<H", data, entry + 6, desc | 0x0080)     # N_WEAK_DEF
+    open(path, "wb").write(data)
+
+
+def main():
+    args, skip = [], False
+    for a in sys.argv[1:]:
+        if skip:
+            skip = False
+        elif a == "-z":
+            skip = True
+        else:
+            args.append(a)
+    # Apple's linker signs every arm64 program and library it makes ad hoc; lld does so by itself only for
+    # macOS and the simulator. Asked for here, so a dylib built on Linux carries the signature the app's
+    # "Sign bundled dylibs" phase and dyld expect (a sideloader signs the whole app again on install).
+    if "-r" not in args and "-adhoc_codesign" not in args and "-no_adhoc_codesign" not in args:
+        args.append("-adhoc_codesign")
+    code, out, err = link(args)
+    work, private, merged = None, {}, []
+    for _ in range(8):
+        duplicates = re.findall(r"error: duplicate symbol: (\S+)\n>>> defined in (.+?)\((.+?)\)\n>>> defined in (.+?)\((.+?)\)", err)
+        other = [line for line in err.splitlines() if "error:" in line and "duplicate symbol" not in line and "too many errors" not in line]
+        if code == 0 or not duplicates or other:
+            break
+        work = work or tempfile.mkdtemp(prefix="bcd-ld-")
+        todo = []
+        for symbol, first, first_member, second, second_member in duplicates:
+            name = "_" + symbol
+            if not (in_common(member(first, first_member, work), name) and in_common(member(second, second_member, work), name)):
+                todo = None
+                break
+            todo.append((name, second, second_member))
+        if not todo:
+            break
+        for name, archive, inner in todo:
+            if archive not in private:
+                private[archive] = os.path.join(tempfile.mkdtemp(dir=work), os.path.basename(archive))
+                shutil.copy2(archive, private[archive])
+            copy = private[archive]
+            obj = member(copy, inner, work)
+            weaken(obj, name)
+            subprocess.run([f"{LLVM}/llvm-ar", "r", copy, inner], cwd=os.path.dirname(obj), check=True, stderr=subprocess.DEVNULL)
+            merged.append(name)
+        # The private copies come first on the search path, and replace any archive named by its path.
+        again = [private.get(os.path.realpath(a), private.get(a, a)) for a in args]
+        again = [f"-L{os.path.dirname(p)}" for p in private.values()] + again
+        code, out, err = link(again)
+    if merged and code == 0:
+        sys.stderr.write("ld64.lld stand-in: zero-filled globals defined twice, linked as one as Apple's linker does: "
+                         + ", ".join(sorted(set(merged))) + "\n")
+    if code == 0 and "-r" not in args and "-o" in args:
+        output = args[args.index("-o") + 1]
+        clamped = clamp_alignment(output)
+        if clamped:
+            sys.stderr.write("ld64.lld stand-in: section alignment put at the page size, as Apple's linker writes it: "
+                             + "; ".join(clamped) + "\n")
+            if any("->" in c for c in clamped) and "-adhoc_codesign" in args:
+                # The header changed under lld's signature: sign again, the way the build's own signing does.
+                subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), "codesign"), "--force", "--sign", "-", output],
+                               stdout=subprocess.DEVNULL, check=True)
+    sys.stdout.write(out)
+    sys.stderr.write(err)
+    if work:
+        shutil.rmtree(work, ignore_errors=True)
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main()

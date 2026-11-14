@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+# A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
+"""plutil -convert binary1|xml1 [-o OUT] FILE, and plutil -lint FILE: what BCD's build uses."""
+import plistlib
+import sys
+
+args = sys.argv[1:]
+if len(args) >= 2 and args[0] == "-lint":
+    plistlib.load(open(args[1], "rb"))
+    print(f"{args[1]}: OK")
+elif len(args) >= 3 and args[0] == "-convert" and args[1] in ("binary1", "xml1"):
+    out = args[args.index("-o") + 1] if "-o" in args else args[-1]
+    data = plistlib.load(open(args[-1], "rb"))
+    with open(out, "wb") as f:
+        plistlib.dump(data, f, fmt=plistlib.FMT_BINARY if args[1] == "binary1" else plistlib.FMT_XML, sort_keys=False)
+else:
+    sys.exit(f"plutil stand-in: '{' '.join(args)}' is not handled")

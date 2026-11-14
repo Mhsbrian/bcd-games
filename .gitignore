@@ -259,3 +259,10 @@ app/Madeira/licenses/SPIRV-Tools-Apache-2.0.txt
 app/Madeira/licenses/cereal-BSD-3-Clause.txt
 # Windows Vulkan (tools/build-vulkan-dlls.sh -> build/wine-pe/build-modules.sh winevulkan vulkan-1), built in CI; app/Madeira/vulkan/README.md is tracked
 app/Madeira/vulkan/arm64ec-windows/
+
+# Linux preview builds and screenshots (tools/linux/preview.py); the sample art in them is never committed.
+/out/
+
+# Apple's Metal Shader Converter library: Apple's, under Apple's agreement, never committed in this fork
+# (tools/linux/converter-from-ipa.py puts it here for a local build).
+/app/Madeira/d3d12/libmetalirconverter.dylib

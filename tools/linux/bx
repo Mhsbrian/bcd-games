@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 B Honey (Mhsbrian/bcd-games)
+#
+# Run a command in BCD's Linux build image (tools/linux/image), as the calling user, with the checkout
+# mounted at its own path and the host's Darwin SDK bundle (xtool's, from an Xcode download) read-only.
+#
+#   tools/linux/bx image            build the image once (bcd-ios-build:1)
+#   tools/linux/bx cmake --version  run anything in it
+#
+#   BCD_SDK_HOME   the home directory that holds .swiftpm/swift-sdks/darwin.artifactbundle
+#                  (default ~/ios-toolchain/home: the iOS 27.1 SDK)
+#   BCD_BX_ARGS    extra `docker run` arguments
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+IMAGE=bcd-ios-build:1
+if [ "${1:-}" = image ]; then
+    exec docker build -t "$IMAGE" "$ROOT/tools/linux/image"
+fi
+SDK_HOME=${BCD_SDK_HOME:-$HOME/ios-toolchain/home}
+[ -d "$SDK_HOME/.swiftpm/swift-sdks/darwin.artifactbundle" ] || { echo "bx: no Darwin SDK bundle under $SDK_HOME" >&2; exit 2; }
+docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "bx: build the image first: tools/linux/bx image" >&2; exit 2; }
+# Apple's compiler runtime for iOS (libclang_rt.ios.a) is mounted where the image's clang looks for it.
+# The SDK bundle is mounted where the toolchain file expects it; HOME is a scratch folder in the checkout
+# so caches (clang modules, cargo, pip) persist between runs and nothing is written into the SDK home.
+mkdir -p "$ROOT/out/home"
+exec docker run --rm --user "$(id -u):$(id -g)" -e HOME="$ROOT/out/home" -e BCD_SHIMS="$ROOT/tools/linux/shims" \
+    -v "$SDK_HOME/.swiftpm/swift-sdks/darwin.artifactbundle":/opt/darwin:ro \
+    -v "$SDK_HOME/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/21/lib/darwin":/usr/lib/clang/21/lib/darwin:ro \
+    -v "$ROOT":"$ROOT" -w "$PWD" ${BCD_BX_ARGS:-} "$IMAGE" "$@"
