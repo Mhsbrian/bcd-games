@@ -73,13 +73,22 @@ require(net_fn is not None, 'isDotNetFramework is one function with its comment'
 # only for a setup that already failed once in the game.
 dx_fn = re.search(r'(?:    ///[^\n]*\n)+    static func isDirectXSetup\(.*?\n    \}\n', installers, re.S)
 require(dx_fn is not None, 'isDirectXSetup is one function with its comment')
+# Mhsbrian fork (2026-11-14): the third is Microsoft's Visual C++ setup (isVisualCppRedist), and the name alone decides nothing: only a
+# file whose own version resource says 14.x (the 2015-2022 runtime) is provided, since BCD links Wine's runtime DLLs at every start.
+vc_fn = re.search(r'(?:    ///[^\n]*\n)+    static func isVisualCppRedist\(.*?\n    \}\n', installers, re.S)
+require(vc_fn is not None, 'isVisualCppRedist is one function with its comment')
 lower = installers
-for fn in (net_fn, dx_fn):
+for fn in (net_fn, dx_fn, vc_fn):
     if fn:
         lower = lower.replace(fn.group(0), '')
-lower = lower.lower()
+lower = '\n'.join(l for l in lower.splitlines() if not l.strip().startswith('//')).replace('MADEIRA_DOCK_VCREDIST_PROVIDED', '').lower()
 require(not any(n in lower for n in ('dxsetup', 'vcredist', 'vc_redist', 'dotnetfx', 'dxwebsetup', 'physx', 'ndp4')),
-        'no redistributable names outside isDotNetFramework and isDirectXSetup: nothing else is decided by program name')
+        'no redistributable names outside isDotNetFramework, isDirectXSetup and isVisualCppRedist: nothing else is decided by program name')
+require(vc_fn is not None and re.findall(r'hasPrefix\("([^"]+)"\)', vc_fn.group(0)) == ['vc_redist', 'vcredist'],
+        'isVisualCppRedist names only the two spellings of Microsoft\'s setup')
+require('let visualCppProvided = flag("MADEIRA_DOCK_VCREDIST_PROVIDED")' in installers
+        and 'fileVersion(file), version.first == 14' in installers and '|| vcVersions[$0.executable] != nil' in installers,
+        'the Visual C++ rule: its own switch (default on, read through flag()), the edition from the file version, the plan\'s provided path')
 require(net_fn is not None and not any(n in net_fn.group(0).lower() for n in ('dxsetup', 'vcredist', 'vc_redist', 'dxwebsetup', 'physx')),
         'isDotNetFramework names only .NET Framework files')
 require(dx_fn is not None and re.findall(r'"([^"]+\.exe)"', dx_fn.group(0)) == ['dxsetup.exe', 'dxwebsetup.exe'],
@@ -193,6 +202,21 @@ func pe(_ url: URL, machine: UInt16) throws {
     bytes[0] = 0x4d; bytes[1] = 0x5a; bytes[60] = 64
     bytes[64] = 0x50; bytes[65] = 0x45
     bytes[68] = UInt8(machine & 0xff); bytes[69] = UInt8(machine >> 8)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(bytes).write(to: url)
+}
+/// A PE header followed by a version resource's VS_FIXEDFILEINFO (as Microsoft's setups carry), 4-byte aligned.
+func versioned(_ url: URL, version: [UInt16], machine: UInt16 = 0x14c) throws {
+    var bytes = [UInt8](repeating: 0, count: 0x400)
+    bytes[0] = 0x4d; bytes[1] = 0x5a; bytes[60] = 64
+    bytes[64] = 0x50; bytes[65] = 0x45
+    bytes[68] = UInt8(machine & 0xff); bytes[69] = UInt8(machine >> 8)
+    func put16(_ at: Int, _ v: UInt16) { bytes[at] = UInt8(v & 0xff); bytes[at + 1] = UInt8(v >> 8) }
+    let at = 0x200
+    bytes[at] = 0xbd; bytes[at + 1] = 0x04; bytes[at + 2] = 0xef; bytes[at + 3] = 0xfe   // dwSignature
+    put16(at + 6, 1)                                                                      // dwStrucVersion 1.0
+    put16(at + 8, version[1]); put16(at + 10, version[0])                                 // dwFileVersionMS: minor, major
+    put16(at + 12, version[3]); put16(at + 14, version[2])                                // dwFileVersionLS: revision, build
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data(bytes).write(to: url)
 }
@@ -1160,6 +1184,137 @@ func pe(_ url: URL, machine: UInt16) throws {
         out = since(mark)
         require(out.contains("app=7038 program=directx skipped: provided by BCD") && out.contains("record: no, another program of this entry still has to run") &&
                 DockInstallers.script != nil && batchText().contains("after.exe") && !batchText().contains("DXSETUP"), "an entry with another program still to run is held back, only the other runs")
+
+        // ---- Mhsbrian fork (2026-11-14): a Visual C++ 2015-2022 setup is provided by BCD -------------------------------------
+        require(DockInstallScripts.isVisualCppRedist("C:\\g\\_CommonRedist\\vcredist\\2022\\VC_redist.x64.exe") && DockInstallScripts.isVisualCppRedist("C:\\g\\vcredist_x86.exe") &&
+                !DockInstallScripts.isVisualCppRedist("C:\\g\\UE4PrereqSetup_x64.exe") && !DockInstallScripts.isVisualCppRedist("C:\\g\\vcredist.msi") &&
+                !DockInstallScripts.isVisualCppRedist("C:\\g\\DXSETUP.exe"), "isVisualCppRedist: Microsoft's two spellings, .exe only")
+        require(DockInstallScripts.visualCppRedistArch("C:\\g\\VC_redist.x64.exe") == "x64" && DockInstallScripts.visualCppRedistArch("C:\\g\\vcredist_x86.exe") == "x86" &&
+                DockInstallScripts.visualCppRedistArch("C:\\g\\VC_redist.arm64.exe") == "arm64" && DockInstallScripts.visualCppRedistArch("C:\\g\\vcredist.exe") == nil,
+                "visualCppRedistArch: from the file name, nil when it does not say")
+        require(VCRuntimeMarker.parse("v14.42.34433.00") ?? [] == [14, 42, 34433, 0] && VCRuntimeMarker.parse("14.44.35211.0") ?? [] == [14, 44, 35211, 0] &&
+                VCRuntimeMarker.parse("14.40") ?? [] == [14, 40, 0, 0] && VCRuntimeMarker.parse("fourteen") == nil && VCRuntimeMarker.parse("14..1") == nil &&
+                VCRuntimeMarker.newer([14, 44, 35211, 0], than: [14, 42, 34433, 0]) && !VCRuntimeMarker.newer([14, 42, 34433, 0], than: [14, 42, 34433, 0]) &&
+                !VCRuntimeMarker.newer([14, 40, 99999, 0], than: [14, 42, 0, 0]), "VCRuntimeMarker: versions parse and compare")
+        let x64Key = "[Software\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x64]"
+        let wowX64Key = "[Software\\\\Wow6432Node\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x64]"
+        let wowX86Key = "[Software\\\\Wow6432Node\\\\Microsoft\\\\VisualStudio\\\\14.0\\\\VC\\\\Runtimes\\\\x86]"
+        let template = "WINE REGISTRY Version 2\n;; All keys relative to REGISTRY\\\\Machine\n\n#arch=win64\n\n"
+            + x64Key + " 1700000000\n\"Bld\"=dword:00008681\n\"Installed\"=dword:00000001\n\"Major\"=dword:0000000e\n\"Minor\"=dword:0000002a\n\"Rbld\"=dword:00000000\n\"Version\"=\"v14.42.34433.00\"\n\n"
+            + "[Software\\\\Other] 1700000000\n\"Keep\"=\"1\"\n\n"
+            + wowX86Key + " 1700000000\n\"Installed\"=dword:00000001\n\"Version\"=\"v14.42.34433.00\"\n"
+        var raised = VCRuntimeMarker.raise("x64", to: [14, 44, 35211, 0], in: template, now: 1800000000)
+        require(raised.changed == 2 && VCRuntimeMarker.version(of: VCRuntimeMarker.root + "x64", in: raised.text) ?? [] == [14, 44, 35211, 0] &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.wowRoot + "x64", in: raised.text) ?? [] == [14, 44, 35211, 0] &&
+                raised.text.contains(x64Key + " 1700000000\n\"Bld\"=dword:0000898b\n\"Installed\"=dword:00000001\n\"Major\"=dword:0000000e\n\"Minor\"=dword:0000002c\n\"Rbld\"=dword:00000000\n\"Version\"=\"v14.44.35211.00\"\n") &&
+                raised.text.contains(wowX64Key + " 1800000000\n\"Bld\"=dword:0000898b\n\"Installed\"=dword:00000001\n") &&
+                raised.text.contains("[Software\\\\Other] 1700000000\n\"Keep\"=\"1\"\n") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.wowRoot + "x86", in: raised.text) ?? [] == [14, 42, 34433, 0],
+                "VCRuntimeMarker.raise x64: the existing key takes the six values in place, the missing view is added, nothing else changes")
+        require(VCRuntimeMarker.raise("x64", to: [14, 44, 35211, 0], in: raised.text, now: 1).changed == 0 &&
+                VCRuntimeMarker.raise("x64", to: [14, 40, 33810, 0], in: raised.text, now: 1).text == raised.text &&
+                VCRuntimeMarker.raise("arm64", to: [14, 50, 0, 0], in: template, now: 1).changed == 0 &&
+                VCRuntimeMarker.raise("x64", to: [12, 0, 40664, 0], in: template, now: 1).changed == 0,
+                "VCRuntimeMarker.raise: a second time changes nothing, an older setup never lowers a marker, only 14.x and only x64 and x86")
+        raised = VCRuntimeMarker.raise("x86", to: [14, 44, 35211, 0], in: template, now: 1800000000)
+        require(raised.changed == 1 && raised.text.contains(wowX86Key + " 1700000000\n\"Installed\"=dword:00000001\n\"Version\"=\"v14.44.35211.00\"\n\"Bld\"=dword:0000898b\n") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.root + "x64", in: raised.text) ?? [] == [14, 42, 34433, 0],
+                "VCRuntimeMarker.raise x86: the 32-bit view only, missing values added to the key")
+
+        func vcGame(_ id: Int, _ name: String, _ entries: [(String, String, [UInt16]?)]) throws -> DockGame {
+            let g = DockGame(id: id, name: name, installDir: name, library: "Program Files (x86)/Steam/steamapps", installed: true, customExecutables: false)
+            try write(common.appendingPathComponent(name + "/installscript.vdf"), dxScript(entries.map { ($0.0, $0.1) }))
+            for e in entries {
+                let file = common.appendingPathComponent(name + "/" + e.1)
+                if let version = e.2 { try versioned(file, version: version) } else { try pe(file, machine: 0x14c) }
+            }
+            return g
+        }
+        let fileV = DockInstallers.fileVersion
+        try versioned(drive.appendingPathComponent("probe.exe"), version: [14, 44, 35211, 0])
+        try pe(drive.appendingPathComponent("plain.exe"), machine: 0x8664)
+        try write(drive.appendingPathComponent("text.exe"), "not a program, though it says \u{bd}\u{04}")
+        require(fileV(drive.appendingPathComponent("probe.exe")) ?? [] == [14, 44, 35211, 0] && fileV(drive.appendingPathComponent("plain.exe")) == nil &&
+                fileV(drive.appendingPathComponent("text.exe")) == nil && fileV(drive.appendingPathComponent("absent.exe")) == nil,
+                "fileVersion: VS_FIXEDFILEINFO's file version; nil without one, for a file that is no program, for no file")
+
+        // A fresh prefix's markers, as prefix-template.tar.gz has them, next to what the earlier checks recorded.
+        let systemURL = prefix.appendingPathComponent("system.reg")
+        var systemText = (try? String(contentsOf: systemURL, encoding: .utf8)) ?? ""
+        systemText += "\n" + x64Key + " 1700000000\n\"Installed\"=dword:00000001\n\"Version\"=\"v14.42.34433.00\"\n\n"
+            + wowX64Key + " 1700000000\n\"Installed\"=dword:00000001\n\"Version\"=\"v14.42.34433.00\"\n\n"
+            + wowX86Key + " 1700000000\n\"Installed\"=dword:00000001\n\"Version\"=\"v14.42.34433.00\"\n"
+        try write(systemURL, systemText)
+        func systemNow() -> String { (try? String(contentsOf: systemURL, encoding: .utf8)) ?? "" }
+
+        // The usual Unreal case: the 2015-2022 runtime for both architectures and nothing else. The first start plays the game.
+        let vcOnly = try vcGame(7150, "VcOnly", [("vc x64", "_CommonRedist/vcredist/2022/VC_redist.x64.exe", [14, 44, 35211, 0]),
+                                                  ("vc x86", "_CommonRedist/vcredist/2022/VC_redist.x86.exe", [14, 44, 35211, 0])])
+        let vcFound = DockInstallers.found(vcOnly, drive: drive, defaultKey: true).processes.filter { $0.run.key.hasSuffix("\\7150") }
+        mark = now()
+        start(vcOnly)
+        out = since(mark)
+        require(DockInstallers.script == nil && !DockInstallers.installsOnly && !DockInstallers.skipsNextStart,
+                "a game whose install script has only Visual C++ 2015-2022 setups: no batch, no session of installs, the game starts at once")
+        require(out.contains("app=7150 program=vc x64 file=VC_redist.x64.exe status=provided") && out.contains("app=7150 program=vc x86 file=VC_redist.x86.exe status=provided") &&
+                out.contains("app=7150 program=vc x64 skipped: provided by BCD; file=VC_redist.x64.exe is Microsoft's Visual C++ 2015-2022 setup, version 14.44.35211.0") &&
+                out.contains("(MADEIRA_DOCK_VCREDIST_PROVIDED=0 runs it); record: yes") &&
+                (DockInstallers.note ?? "").contains("Provided by BCD, not run: vc x64, vc x86"), "the log and the note say what was provided and why (\(DockInstallers.note ?? ""))")
+        require(vcFound.count == 2 && vcFound.allSatisfy { DockInstallScripts.marked($0.run, in: systemNow()) }, "both entries are recorded like finished runs")
+        require(out.contains("[vcrt] app=7150 HKLM\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64: Installed=1, raised to 14.44.35211.0 in 2 view(s)") &&
+                out.contains("Runtimes\\x86: Installed=1, raised to 14.44.35211.0 in 1 view(s)") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.root + "x64", in: systemNow()) ?? [] == [14, 44, 35211, 0] &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.wowRoot + "x64", in: systemNow()) ?? [] == [14, 44, 35211, 0] &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.wowRoot + "x86", in: systemNow()) ?? [] == [14, 44, 35211, 0],
+                "the registry markers are raised to the setup's version and the log says so")
+        let afterFirst = systemNow()
+        mark = now()
+        start(vcOnly)
+        out = since(mark)
+        require(out.contains("program=vc x64 file=VC_redist.x64.exe status=done") && out.contains("program=vc x86 file=VC_redist.x86.exe status=done") &&
+                !out.contains("provided by BCD") && !out.contains("[vcrt]") && DockInstallers.script == nil && systemNow() == afterFirst,
+                "the second start: both are done, nothing is installed and the registry is not written again")
+
+        // An older setup under the same file name is not the 2015-2022 runtime: it runs, as before.
+        let vcOld = try vcGame(7151, "VcOld", [("vc 2010", "redist/vcredist_x64.exe", [10, 0, 40219, 325]), ("vc 2013", "redist/vcredist_x86.exe", [12, 0, 40664, 0]),
+                                                ("vc unknown", "redist/vcredist_arm.exe", nil)])
+        mark = now()
+        start(vcOld)
+        out = since(mark)
+        require(DockInstallers.script != nil && batchText().contains("vcredist_x64.exe") && batchText().contains("vcredist_x86.exe") && batchText().contains("vcredist_arm.exe") &&
+                !out.contains("provided by BCD") && !out.contains("[vcrt]") && out.contains("app=7151 program=vc 2010 file=vcredist_x64.exe status=pending"),
+                "a 2010 or 2013 setup, and one whose version cannot be read, run as before")
+
+        // With another installer in the script, only that one runs; the markers of a newer prefix are left alone.
+        let vcMixed = try vcGame(7152, "VcMixed", [("vc", "redist/VC_redist.x64.exe", [14, 40, 33810, 0]), ("physx", "redist/PhysX.exe", nil)])
+        mark = now()
+        start(vcMixed)
+        out = since(mark)
+        require(DockInstallers.script != nil && batchText().contains("PhysX.exe") && !batchText().contains("VC_redist") &&
+                out.contains("app=7152 program=vc skipped: provided by BCD") && out.contains("Runtimes\\x64: already at 14.40.33810.0 or newer, left as it is") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.root + "x64", in: systemNow()) ?? [] == [14, 44, 35211, 0],
+                "next to another installer only that one runs, and an older setup never lowers the marker")
+
+        // MADEIRA_DOCK_VCREDIST_PROVIDED=0: the setup runs in a session of its own, as before.
+        setenv("MADEIRA_DOCK_VCREDIST_PROVIDED", "0", 1)
+        let vcOff = try vcGame(7153, "VcOff", [("vc x64", "redist/VC_redist.x64.exe", [14, 50, 35719, 0])])
+        mark = now()
+        start(vcOff)
+        out = since(mark)
+        require(DockInstallers.script != nil && batchText().contains("VC_redist.x64.exe") && !out.contains("provided by BCD") && !out.contains("[vcrt]") &&
+                out.contains("app=7153 program=vc x64 file=VC_redist.x64.exe status=pending") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.root + "x64", in: systemNow()) ?? [] == [14, 44, 35211, 0],
+                "MADEIRA_DOCK_VCREDIST_PROVIDED=0: the setup runs and nothing is written for it, as before")
+        unsetenv("MADEIRA_DOCK_VCREDIST_PROVIDED")
+        // Reset one-time installs forgets the record, and the next start provides it again (a newer setup raises the marker).
+        DockInstallers.setRunsNext(7153, true, prefix: prefix)
+        mark = now()
+        start(vcOff)
+        out = since(mark)
+        require(DockInstallers.script == nil && out.contains("app=7153 program=vc x64 skipped: provided by BCD") &&
+                out.contains("Runtimes\\x64: Installed=1, raised to 14.50.35719.0 in 2 view(s)") &&
+                VCRuntimeMarker.version(of: VCRuntimeMarker.wowRoot + "x64", in: systemNow()) ?? [] == [14, 50, 35719, 0],
+                "with the switch back on the same game is provided, and its newer setup raises the marker")
 
         // Fixture batch for the optional real cmd.exe run: stand-in programs under @DIR@.
         func fixture(_ name: String, _ file: String) -> SteamInstallProcess {

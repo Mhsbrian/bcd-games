@@ -517,6 +517,10 @@ struct LibraryEntry: Codable, Identifiable {
 
     /// A Steam game that starts as its own program ("Start with: The game").
     var startsSteamGameDirectly: Bool { steamAppID != nil && steamStart == "game" }
+    /// Whether a `steamProgramSource` is a pick that stays while its program is installed: the player's own ("choice"), or the
+    /// game's own program behind an Unreal launcher ("unreal", Game details › Steam › Skip the Unreal launcher; Mhsbrian fork,
+    /// 2026-11-14). Any other source is looked up again from Steam's launch configuration.
+    static func keepsSteamProgram(_ source: String?) -> Bool { source == "choice" || source == "unreal" }
     /// What a launch starts, relative to drive_c: "The game"'s program inside the
     /// install folder, else `relativePath`.
     var launchRelativePath: String {
@@ -1144,7 +1148,7 @@ final class LibraryModel: ObservableObject {
              size: SteamInstallFiles.sizeOnDisk(appID: game.id, steamApps: steamApps))
         }.value
         let stored = entries.first { $0.steamAppID == game.id }
-        let picked = stored?.steamProgramSource == "choice" ? stored?.steamProgram : nil
+        let picked = LibraryEntry.keepsSteamProgram(stored?.steamProgramSource) ? stored?.steamProgram : nil
         let known = SteamOwnedLibrary.shared.game(game.id)?.launches != nil
         let install = "\(folder)#\(record.build ?? 0)#\(picked ?? "")#\(known ? 1 : 0)"
         if let stored, stored.steamMetadataInstall == install, stored.metadataRevision == revision,

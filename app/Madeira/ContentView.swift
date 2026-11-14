@@ -1520,6 +1520,10 @@ struct ContentView: View {
         BCDLaunch.applyLibrary(entry, sessionLog: false)
         exportBCDDesktopProfile(entry)
         if let line = DesktopGDISection.apply(entry) { logStore.log(line) }
+        // Mhsbrian fork (2026-11-14): the same for a start of the game's own program, when that program is an Unreal launcher (the
+        // folder it is in has the layout). A start of the game's own Shipping program runs no launcher and gets nothing.
+        if entry.desktop != true, let program = try? LibraryModel.executable(entry.launchRelativePath),
+           let line = UnrealGame.applyMarkerSwitch(installFolder: program.deletingLastPathComponent()) { logStore.log(line) }
         // This run's log under the program's name too (Documents/logs). A Steam game started
         // through Madeira Dock above gets its own from ntdll, once Valve's client starts it.
         let program = entry.desktop == true ? "explorer.exe"
@@ -2506,6 +2510,10 @@ struct ContentView: View {
             for line in SteamDirectStart.launchEntryLine(options: options, key: launchOption) { LogStore.shared.log(line) }   // night round 2026-11-11 (G5 S5)
             // madeira-bcd (round 623): a launch entry that is a .bat or .cmd shows its first lines in the log (SteamDirectStart.batchPreview).
             for line in SteamDirectStart.batchPreview(options: options, key: launchOption, installFolder: installFolder) { LogStore.shared.log(line) }
+            // Mhsbrian fork (2026-11-14): an Unreal Engine game's launcher asks the registry for Microsoft's Visual C++ runtime for the
+            // machine it is on, an ARM64 one here, and stops with "The following component(s) are required" without it. A game packaged
+            // that way gets the session's marker without a line of its own (UnrealGame.applyMarkerSwitch); a line in its settings wins.
+            if let line = UnrealGame.applyMarkerSwitch(installFolder: installFolder) { LogStore.shared.log(line) }
             await SteamOwnedLibrary.shared.prepareDock()
             do {
                 // The launch state may have changed while the connection closed.
@@ -3231,5 +3239,24 @@ enum DesktopGDISection {
             shellByDesktop = false
         }
         return nil
+    }
+}
+
+// Mhsbrian fork (2026-11-14): the session side of UnrealGame (SteamGames.swift, which sets no environment itself).
+extension UnrealGame {
+    /// Sets env.MADEIRA_VCRT_ARM64_KEY for a start from `root` when the folder has Unreal Engine's layout and nothing set the
+    /// switch, and returns the log line; nil for any other folder. Called before the session starts: the lines of bcd.cfg and of
+    /// the game's own settings are exported after this (WineProcessBridge.m) and win, `= 0` included, and the end of every session
+    /// clears the switch.
+    static func applyMarkerSwitch(installFolder root: URL) -> String? {
+        guard let layout = Self.layout(in: root) else { return nil }
+        let current = getenv("MADEIRA_VCRT_ARM64_KEY").map { String(cString: $0) }
+        guard let value = markerSwitch(layout: layout, current: current) else {
+            return "[vcrt] Unreal Engine layout (\(layout.shipping)): MADEIRA_VCRT_ARM64_KEY is already \(current ?? ""), left as it is"
+        }
+        setenv("MADEIRA_VCRT_ARM64_KEY", value, 1)
+        return "[vcrt] Unreal Engine layout (\(layout.shipping); launcher: \(layout.launchers.isEmpty ? "none" : layout.launchers.joined(separator: ", "))): "
+            + "MADEIRA_VCRT_ARM64_KEY=\(value) for this session, so the launcher finds Microsoft's Visual C++ runtime marked installed for an ARM64 machine "
+            + "(env.MADEIRA_VCRT_ARM64_KEY = 0 in the game's settings turns this off)"
     }
 }
