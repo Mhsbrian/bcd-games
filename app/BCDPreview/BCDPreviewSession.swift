@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the in-game screens hide the status bar, as a running game does.
 
 import SwiftUI
 import UIKit
@@ -28,7 +29,9 @@ struct BCDPreviewSessionScreens: ViewModifier {
             // the key window's safe area (BCDSessionInsets), and read from inside that same window, iOS 26 lays the window out again in
             // the middle of the update ("AttributeGraph: cycle detected"), which left the stage as its first frame drew it (round 624:
             // upright on an iOS 26 simulator, no session line, no starting screen and no HUD).
-            content.hidden().onAppear { BCDPreviewStageWindow.show(BCDPreviewSessionStage(spec: tab, store: store, focus: focus)) }
+            // The status bar is hidden as it is while a game runs (ContentView.swift): on the iPhone Duo's outer display that takes the
+            // clock's strip away, which the first Duo pictures showed over the menu button and the menu's close button.
+            content.hidden().statusBarHidden(true).onAppear { BCDPreviewStageWindow.show(BCDPreviewSessionStage(spec: tab, store: store, focus: focus)) }
         } else {
             content
         }
@@ -44,7 +47,8 @@ struct BCDPreviewSessionScreens: ViewModifier {
         let w = UIWindow(windowScene: scene)
         w.windowLevel = .normal + 101
         w.backgroundColor = .black
-        let host = UIHostingController(rootView: stage.ignoresSafeArea())
+        // Hidden here too: this window covers the screen, and the bar followed it, not the hidden shell under it (the Duo simulator kept the clock).
+        let host = UIHostingController(rootView: stage.ignoresSafeArea().statusBarHidden(true))
         host.view.backgroundColor = .black
         w.rootViewController = host
         w.isHidden = false   // deliberately never made key

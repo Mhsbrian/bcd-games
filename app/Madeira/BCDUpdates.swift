@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the update chip's form for a system toolbar.
 
 import Foundation
 import Combine
@@ -157,10 +158,26 @@ extension BCDUpdateChecker {
 /// on and a newer release exists. A tap (or A) opens Settings › Updates; it never opens by itself.
 struct BCDUpdateChip: View {
     @ObservedObject private var checker = BCDUpdateChecker.shared
+    /// In a system toolbar (the native Duo interface): the words and the symbol alone, in the colours the bar gives its own
+    /// buttons. The bar draws its own glass capsule behind each item, and BCD's capsule and white words inside the prominent
+    /// one were white on near-white on every screen (the first Duo pictures).
+    var inToolbar = false
     let open: () -> Void
 
     var body: some View {
-        if checker.showsChip {
+        if checker.showsChip && inToolbar {
+            Button(action: open) {
+                // Not a Label: a system bar shows a Label as its symbol alone.
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(BCDStyle.glow)
+                    Text("Update available").font(BCDStyle.label(12)).lineLimit(1).foregroundStyle(BCDStyle.text)
+                }
+                .fixedSize()
+                .padding(.horizontal, 4)
+            }
+            .bcdFocusable("shell.update", cornerRadius: 16, action: open)
+            .accessibilityHint("Opens Settings at Updates")
+        } else if checker.showsChip {
             Button(action: open) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle.fill").font(.system(size: 12, weight: .bold))

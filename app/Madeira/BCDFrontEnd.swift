@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): one-line title on an upright phone; in the native Duo interface the update chip's toolbar form, the controller tab bar's narrow form, and a start on Settings for the preview.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
 import SwiftUI
@@ -15,8 +16,12 @@ struct BCDFrontEnd: View {
     @ObservedObject var store: BCDStore
     var tab: BCDTab = .home
     var focus: BCDFocus? = nil
+    /// The native Duo interface starts on its Settings tab, at this section when one is given (the preview app's -BCDTab settings:
+    /// Settings is a tab there, so it is photographed inside the shell that holds it). The interface BCD had before ignores both.
+    var startsInSettings = false
+    var settingsSection: BCDSettingsSection? = nil
     var body: some View {
-        if BCDDuoFeatures.active { BCDDuoFrontEnd(store: store, tab: tab, focus: focus) }
+        if BCDDuoFeatures.active { BCDDuoFrontEnd(store: store, tab: tab, focus: focus, startsInSettings: startsInSettings, settingsSection: settingsSection) }
         else { BCDOriginalFrontEnd(store: store, tab: tab, focus: focus) }
     }
 }
@@ -151,8 +156,10 @@ private struct BCDOriginalFrontEnd: View {
 
     private var portraitTitle: some View {
         HStack {
-            Text(tab.title).font(BCDStyle.title(30))
-            Spacer()
+            // One line: beside the update chip and the gear "Downloads" has 154 pt of a 382 pt bar and needs 165, and it broke
+            // after "Download" (the iPhone Duo's outer display; an iPhone SE's 375 pt the same). It is drawn a little smaller there.
+            Text(tab.title).font(BCDStyle.title(30)).lineLimit(1).minimumScaleFactor(0.75)
+            Spacer(minLength: 8)
             statusChips
             settingsButton
         }
@@ -300,9 +307,10 @@ private struct BCDDuoFrontEnd: View {
     @Environment(\.horizontalSizeClass) private var horizontal
     @Environment(\.verticalSizeClass) private var vertical
 
-    init(store: BCDStore, tab: BCDTab = .home, focus: BCDFocus? = nil) {
+    init(store: BCDStore, tab: BCDTab = .home, focus: BCDFocus? = nil, startsInSettings: Bool = false, settingsSection: BCDSettingsSection? = nil) {
         self.store = store
-        _tab = State(initialValue: BCDDuoTab(rawValue: tab.rawValue)!)
+        _tab = State(initialValue: startsInSettings ? .settings : BCDDuoTab(rawValue: tab.rawValue)!)
+        _settingsSection = State(initialValue: settingsSection)
         _focus = StateObject(wrappedValue: focus ?? BCDFocus())
     }
 
@@ -409,8 +417,10 @@ private struct BCDDuoFrontEnd: View {
                 ToolbarItem(placement: .topBarLeading) {
                     jitStatus
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    BCDUpdateChip { settingsSection = .updates; settingsRequest += 1; select(.settings) }
+                // Not .primaryAction: the bar fills that item's capsule with the tint (near white on this theme), and the chip's
+                // white words could not be read on it. A plain trailing item has the bar's own dark glass.
+                ToolbarItem(placement: .topBarTrailing) {
+                    BCDUpdateChip(inToolbar: true) { settingsSection = .updates; settingsRequest += 1; select(.settings) }
                 }
             }
         }
@@ -474,22 +484,12 @@ private struct BCDDuoFrontEnd: View {
     private var controllerTabs: some View {
         let canCycle = focus.hints.contains { $0.button == .leftShoulder }
             && focus.hints.contains { $0.button == .rightShoulder }
-        return HStack(spacing: 8) {
-            Text("LB").font(.caption2.bold()).padding(6).background(BCDStyle.surfaceRaised, in: Capsule())
-            ForEach(BCDDuoTab.allCases) { item in
-                Button { select(item) } label: {
-                    Label(item.title, systemImage: item.symbol)
-                        .font(.caption.weight(tab == item ? .bold : .medium))
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
-                        .background(tab == item ? BCDStyle.violet : .clear, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canCycle)
-                .accessibilityAddTraits(tab == item ? .isSelected : [])
-            }
-            Text("RB").font(.caption2.bold()).padding(6).background(BCDStyle.surfaceRaised, in: Capsule())
+        // Every tab with its name where the bar has room for the four (a phone on its side, the inner display). Upright on the
+        // outer display it has 382 pt and each name got about 40 ("H…", "Lib…", "Do…", "Se…" in the first Duo pictures): there
+        // the chosen tab keeps its name and the others are their symbols. VoiceOver reads every name in both.
+        return ViewThatFits(in: .horizontal) {
+            controllerTabRow(canCycle: canCycle, names: true)
+            controllerTabRow(canCycle: canCycle, names: false)
         }
         .foregroundStyle(BCDStyle.text)
         .opacity(canCycle ? 1 : 0.55)
@@ -498,6 +498,31 @@ private struct BCDDuoFrontEnd: View {
         .overlay(alignment: .bottom) { Rectangle().fill(BCDStyle.stroke).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Main tabs. Use the left and right shoulder buttons to switch.")
+    }
+
+    /// `names`: every tab's name beside its symbol, at its own width; without, only the chosen tab's.
+    private func controllerTabRow(canCycle: Bool, names: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text("LB").font(.caption2.bold()).padding(6).background(BCDStyle.surfaceRaised, in: Capsule())
+            ForEach(BCDDuoTab.allCases) { item in
+                Button { select(item) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: item.symbol)
+                        if names || tab == item { Text(item.title).lineLimit(1).fixedSize() }
+                    }
+                    .font(.caption.weight(tab == item ? .bold : .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(tab == item ? BCDStyle.violet : .clear, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canCycle)
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(tab == item ? .isSelected : [])
+            }
+            Text("RB").font(.caption2.bold()).padding(6).background(BCDStyle.surfaceRaised, in: Capsule())
+        }
     }
 
     private var hintBar: some View {

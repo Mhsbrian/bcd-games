@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a connected controller's long name takes a second line on an upright phone.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
 import SwiftUI
@@ -244,8 +245,10 @@ private struct BCDControllerPage: View {
                 .frame(width: roomy ? 46 : 40, height: roomy ? 46 : 40)
                 .background(BCDStyle.surfaceRaised, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text(pad.name).font(BCDStyle.label(roomy ? 17 : 15)).lineLimit(roomy ? 2 : 1).minimumScaleFactor(0.8)
-                    .fixedSize(horizontal: false, vertical: roomy)
+                // An upright phone has about 180 pt for the name beside the battery: "DualSense Wireless Controller" needs 215 and
+                // was cut short even drawn at 80% ("…Controll…", the first Duo pictures). It takes a second line there instead.
+                Text(pad.name).font(BCDStyle.label(roomy ? 17 : 15)).lineLimit(roomy || layout == .phonePortrait ? 2 : 1).minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: roomy || layout == .phonePortrait)
                 Text(padDetail(pad)).font(BCDStyle.body(roomy ? 14 : 12)).foregroundStyle(BCDStyle.textSoft).lineLimit(1)
             }
             Spacer(minLength: 6)

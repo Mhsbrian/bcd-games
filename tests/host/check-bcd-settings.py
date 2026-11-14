@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright 2026 thebcd69 (BCD)
 # BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+# Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the update chip in the native toolbar is BCDUpdateChip(inToolbar: true).
 # Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 # Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 """BCD's Settings (app/Madeira/BCDSettings*.swift, docs/BCD-UI-ARCHITECTURE.md).
@@ -514,7 +515,7 @@ check(not [t for t in shown_text if re.search(r"page|absoluteString|html_url|htt
 check("if checker.showsChip" in chip and "var showsChip: Bool { autoCheck && state == .updateAvailable }" in updates
       and 'Text("Update available")' in chip, "updates: the chip shows only while checking automatically and a newer release exists")
 chips = block(front, "private func page(_ item: BCDDuoTab) -> some View")
-check("BCDUpdateChip { settingsSection = .updates; settingsRequest += 1; select(.settings) }" in chips
+check("BCDUpdateChip(inToolbar: true) { settingsSection = .updates; settingsRequest += 1; select(.settings) }" in chips
       and "section: settingsSection" in front, "updates: the native toolbar keeps the update action and opens Settings at Updates")
 check('Label("Go to update"' in updates_view and "checker.checkNow()" in updates_view and "checker.autoCheck = $0" in updates_view
       and "model.go(to: .updates)" in views["BCDSettingsAbout.swift"],
