@@ -11,8 +11,8 @@ import SwiftUI
 /// regular x regular) and outer display (678x466 or 466x678 pt, compact), or a Split View half of either. Without the argument
 /// the modifier does nothing.
 /// A third part gives the window a safe area, in points: `:<top>,<leading>,<bottom>,<trailing>`. The iPhone Duo simulator's outer
-/// display keeps a strip about 83 pt wide for the clock and the status icons (trailing when upright, leading on its side), so
-/// `466x678:compact,regular:0,0,21,83` and `678x466:compact,compact:0,83,21,0` stand in for it on a simulator that is not a Duo.
+/// display keeps a strip 84 pt wide for the clock and the status icons (trailing when upright, leading on its side), so
+/// `466x678:compact,regular:0,0,34,84` and `678x466:compact,compact:0,84,34,0` stand in for it on a simulator that is not a Duo.
 struct BCDPreviewStage: ViewModifier {
     private static let parsed: (size: CGSize, horizontal: UserInterfaceSizeClass?, vertical: UserInterfaceSizeClass?, safe: EdgeInsets)? = {
         guard let spec = UserDefaults.standard.string(forKey: "BCDStage") else { return nil }

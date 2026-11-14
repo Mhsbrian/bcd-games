@@ -41,6 +41,25 @@ directly, because the compiler's own driver refuses to link for these platforms 
 
 The preview is never installed on a person's own phone. It is not BCD, and it would spend an App ID.
 
+## Standing in for the iPhone Duo's outer display
+
+Xcode 27.2's iPhone Duo simulator (GitHub's `xcode-27` runner, `.github/workflows/duo-preview.yml`) says what the app gets on
+the outer display: a window of 466 x 678 pt, compact x regular upright and compact x compact on its side, with a safe area of
+84 pt at the trailing side upright (the clock's strip; at the leading side on its side) and 34 pt at the bottom. That strip
+stays a safe area while the status bar is hidden.
+
+The preview's stage draws the interface in a window of that size with that safe area on a simulated iPad, which is enough for
+BCD's own layout (not for what iOS draws itself on a Duo: the tab rail and the navigation bar's buttons in the strip):
+
+    tools/linux/preview.py shoot --device mini --orient portrait  --stage 466x678:compact,regular:0,0,34,84
+    tools/linux/preview.py shoot --device mini --orient landscape --stage 678x466:compact,compact:0,84,34,0
+
+The picture is the whole iPad screen; the window is in its middle. The same stage without a safe area stands in for an
+ordinary iPhone (`375x667:compact,regular`, `667x375:compact,compact`), which is how a change is shown to leave other devices
+as they were. The layout rules themselves are run by `tests/host/check-duo-layout.py`; on this host:
+
+    python3 tests/host/check-duo-layout.py --swiftc "$HOME/ios-toolchain/xt swiftc" --work "$PWD/out"
+
 ## Two findings about the simulated phones
 
 **x86Code's `duo` device is not an iPhone Duo.** It is the Duo's screen on the ordinary iOS 27.2

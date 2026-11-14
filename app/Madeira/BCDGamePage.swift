@@ -2100,8 +2100,8 @@ struct BCDGamePage: View {
 
 /// Sizes for each layout: a phone on its side, an upright phone, an iPad either way.
 /// The game page on a phone held sideways with less room than any ordinary iPhone gives it (pure: tests/host/check-duo-layout.py
-/// compiles it). The narrowest of those is 667 pt (an iPhone SE); the iPhone Duo's outer display is 678 pt less the 83 pt its
-/// clock takes, 595 pt, and it is 466 pt tall where the others have 375 to 440. With the 214 pt facts card the main column had
+/// compiles it). The narrowest of those is 667 pt (an iPhone SE); the iPhone Duo's outer display is 678 pt less the 84 pt its
+/// clock takes, 594 pt, and it is 466 pt tall where the others have 375 to 440. With the 214 pt facts card the main column had
 /// 319 pt: Play and Options were put on one row that needed 330 ("Opt…" in the first Duo pictures), and the card wrapped
 /// "External drive" and "64-bit · Direct3D 11". There the card is as wide as on a large phone, its names and values stand 12 pt
 /// apart, not 32, and the actions go one under the other, which the height has room for. 640 pt and wider are as they were.

@@ -43,7 +43,7 @@ extension EnvironmentValues {
 private struct BCDHintBarKey: EnvironmentKey { static let defaultValue = false }
 
 /// A strip at one side of the window that iOS keeps for itself (pure: tests/host/check-duo-layout.py compiles it). The iPhone
-/// Duo's outer display has one about 83 pt wide for the clock and the status icons: at the trailing side upright, at the leading
+/// Duo's outer display has one 84 pt wide for the clock and the status icons: at the trailing side upright, at the leading
 /// side when the phone lies on its side (Xcode 27.2's simulator, 2026-11-13), and the native Duo interface's tab rail stands in
 /// it. It is told from the safe area alone, with no model identifier: at least `minimum` points on one side and less than half
 /// of that on the other. An iPhone on its side has the same inset on both sides (47 to 62 pt, the Dynamic Island's), upright it

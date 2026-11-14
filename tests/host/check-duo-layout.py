@@ -3,8 +3,8 @@
 # Copyright 2026 B Honey (Mhsbrian/bcd-games)
 """The layout rules for the iPhone Duo's outer display, and that no other device meets them.
 
-The outer display is 466 x 678 pt, and iOS keeps a strip about 83 pt wide at one side of it for the clock (Xcode 27.2's
-iPhone Duo simulator, 2026-11-13): an upright page has 383 pt and a page on its side 595 pt, less than any ordinary iPhone
+The outer display is 466 x 678 pt, and iOS keeps a strip 84 pt wide at one side of it for the clock (Xcode 27.2's
+iPhone Duo simulator, 2026-11-13): an upright page has 382 pt and a page on its side 594 pt, less than any ordinary iPhone
 gives a page on its side (667 pt). The rules below decide from sizes alone, with no model identifier, so they hold in a
 LiveContainer window and in the preview app too. Each is a small enum inside the view's own file; this check cuts the four
 out, compiles them alone and runs them over the Duo's sizes and over every other device's.
@@ -84,12 +84,12 @@ func check(_ what: String, _ ok: Bool, _ detail: String = "") {
 @main struct Run {
     static func main() {
         // A page on its side, in points: the screen's long side less the safe area at both ends.
-        let duoSide: CGFloat = 678 - 83
+        let duoSide: CGFloat = 678 - 84
         // iPhone SE (667, no insets), 13 mini (812 - 2x50), 15 (852 - 2x59), 16 Pro (874 - 2x62), 16 Pro Max (956 - 2x62), 17 Pro Max.
         let phonesSide: [CGFloat] = [667, 712, 734, 750, 832, 844]
 
         // 1. Downloads
-        check("Downloads: the Duo's outer display on its side (595 pt) is one column", !BCDDownloadsColumns.sideBySide(width: duoSide, pad: false))
+        check("Downloads: the Duo's outer display on its side (594 pt) is one column", !BCDDownloadsColumns.sideBySide(width: duoSide, pad: false))
         check("Downloads: every ordinary iPhone on its side keeps two columns", phonesSide.allSatisfy { BCDDownloadsColumns.sideBySide(width: $0, pad: false) })
         check("Downloads: an iPad keeps two columns at any width, and a page not laid out yet (0) changes nothing",
               [320, 507, 595, 744, 1024].allSatisfy { BCDDownloadsColumns.sideBySide(width: $0, pad: true) } && BCDDownloadsColumns.sideBySide(width: 0, pad: false))
@@ -97,7 +97,7 @@ func check(_ what: String, _ ok: Bool, _ detail: String = "") {
               BCDDownloadsColumns.minimum - 40 - 16 - 300 >= 280 && 667 - 40 - 16 - 300 >= 300)
 
         // 2. The game page
-        check("game page: 595 pt is narrow, 667 pt and wider are not, 0 is not", BCDGamePageRoom.narrow(width: duoSide)
+        check("game page: 594 pt is narrow, 667 pt and wider are not, 0 is not", BCDGamePageRoom.narrow(width: duoSide)
               && phonesSide.allSatisfy { !BCDGamePageRoom.narrow(width: $0) } && !BCDGamePageRoom.narrow(width: 0))
         let inner = BCDGamePageRoom.narrowFacts - 32
         check("game page: the facts card has room for \"Program\" and \"64-bit · Direct3D 11\" on one line (55 + 12 + 130 pt of 204)",
@@ -119,8 +119,8 @@ func check(_ what: String, _ ok: Bool, _ detail: String = "") {
               && !BCDSettingsValueColumn.valueFirst(row: 330, upright: true))
 
         // 4. The clock's strip
-        check("strip: the Duo's outer display has one, upright (trailing 83) and on its side (leading 83)",
-              BCDSideStrip.present(leading: 0, trailing: 83) && BCDSideStrip.present(leading: 83, trailing: 0) && BCDSideStrip.present(leading: 83, trailing: 21))
+        check("strip: the Duo's outer display has one, upright (trailing 84) and on its side (leading 84)",
+              BCDSideStrip.present(leading: 0, trailing: 84) && BCDSideStrip.present(leading: 84, trailing: 0) && BCDSideStrip.present(leading: 84, trailing: 34))
         check("strip: an upright iPhone and an iPad have none (no side insets)", !BCDSideStrip.present(leading: 0, trailing: 0))
         check("strip: an iPhone on its side has none: the same inset on both sides, 44 to 68 pt",
               [44, 47, 50, 59, 62, 68, 83, 90].allSatisfy { !BCDSideStrip.present(leading: CGFloat($0), trailing: CGFloat($0)) })

@@ -156,7 +156,7 @@ private struct BCDOriginalFrontEnd: View {
 
     private var portraitTitle: some View {
         HStack {
-            // One line: beside the update chip and the gear "Downloads" has 154 pt of a 383 pt bar and needs 165, and it broke
+            // One line: beside the update chip and the gear "Downloads" has 154 pt of a 382 pt bar and needs 165, and it broke
             // after "Download" (the iPhone Duo's outer display; an iPhone SE's 375 pt the same). It is drawn a little smaller there.
             Text(tab.title).font(BCDStyle.title(30)).lineLimit(1).minimumScaleFactor(0.75)
             Spacer(minLength: 8)
@@ -485,7 +485,7 @@ private struct BCDDuoFrontEnd: View {
         let canCycle = focus.hints.contains { $0.button == .leftShoulder }
             && focus.hints.contains { $0.button == .rightShoulder }
         // Every tab with its name where the bar has room for the four (a phone on its side, the inner display). Upright on the
-        // outer display it has 383 pt and each name got about 40 ("H…", "Lib…", "Do…", "Se…" in the first Duo pictures): there
+        // outer display it has 382 pt and each name got about 40 ("H…", "Lib…", "Do…", "Se…" in the first Duo pictures): there
         // the chosen tab keeps its name and the others are their symbols. VoiceOver reads every name in both.
         return ViewThatFits(in: .horizontal) {
             controllerTabRow(canCycle: canCycle, names: true)

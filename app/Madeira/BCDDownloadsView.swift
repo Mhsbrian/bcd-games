@@ -245,7 +245,7 @@ struct BCDDownloadsView: View {
 /// Whether the queue and the storage column stand side by side (pure: tests/host/check-duo-layout.py compiles it). A phone on its
 /// side gives the queue what the 300 pt storage column leaves, and a download's row needs about 310 pt for its sizes, its speed
 /// and its two buttons in one line: the narrowest ordinary iPhone on its side (667 pt) has that, the iPhone Duo's outer display
-/// (678 pt less the 83 pt its clock takes, 595 pt) does not, and the first Duo pictures showed "816 MB…", "23.6 M…" and Pause
+/// (678 pt less the 84 pt its clock takes, 594 pt) does not, and the first Duo pictures showed "816 MB…", "23.6 M…" and Pause
 /// above Cancel there. Under `minimum` the page is one column, as on an upright phone. An iPad's layout is as it was.
 enum BCDDownloadsColumns {
     static let minimum: CGFloat = 640
