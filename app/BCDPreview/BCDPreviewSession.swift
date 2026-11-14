@@ -47,7 +47,8 @@ struct BCDPreviewSessionScreens: ViewModifier {
         let w = UIWindow(windowScene: scene)
         w.windowLevel = .normal + 101
         w.backgroundColor = .black
-        let host = UIHostingController(rootView: stage.ignoresSafeArea())
+        // Hidden here too: this window covers the screen, and the bar followed it, not the hidden shell under it (the Duo simulator kept the clock).
+        let host = UIHostingController(rootView: stage.ignoresSafeArea().statusBarHidden(true))
         host.view.backgroundColor = .black
         w.rootViewController = host
         w.isHidden = false   // deliberately never made key
