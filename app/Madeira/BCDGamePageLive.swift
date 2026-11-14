@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified by Mhsbrian (fork of BCD), 2026-11-14: Game details › Steam › "Skip the Unreal launcher" (unrealLayouts, readUnrealLayout, the
+// "unrealdirect" setting); not part of BCD as published by thebcd69.
 
 import Combine
 import Foundation
@@ -34,6 +36,9 @@ import UniformTypeIdentifiers
     /// BCD Dock's Steam launch option (2026-10-24): the entries Steam's launch configuration lists for the game that a Dock
     /// start can run (SteamDirectStart.dockOptions), by App ID, read from the cached library once the page opens.
     private var dockOptions: [Int: [SteamDirectStart.DockOption]] = [:]
+    /// Mhsbrian fork (2026-11-14): the Unreal Engine layout of a Steam game's install folder, for "Skip the Unreal launcher"; absent for a
+    /// game that is not packaged that way (UnrealGame.layout, read off the main thread when its page opens).
+    private var unrealLayouts: [Int: UnrealGame.Layout] = [:]
 
     nonisolated override init() { super.init() }
 
@@ -629,6 +634,7 @@ import UniformTypeIdentifiers
                 case "steam": source = (entry.steamProgramArguments ?? "").isEmpty ? "Picked from the game's launch settings on Steam."
                     : "Picked, with its arguments, from the game's launch settings on Steam."
                 case "choice": source = "Picked by you."
+                case "unreal": source = "The game's own program, without the Unreal launcher in front of it."
                 case "only": source = "The only program in the install folder."
                 default: source = "Pick the program to start."
                 }
@@ -667,6 +673,16 @@ import UniformTypeIdentifiers
                 }
                 settings.append(BCDGameSetting(id: "offline", title: "Offline play", kind: .info, value: state, note: why))
             }
+        }
+        // Mhsbrian fork (2026-11-14): an Unreal Engine game starts through a small launcher that checks for Microsoft's Visual C++ runtime
+        // before it starts the game's own program. BCD answers that check, so this is off and only an escape hatch for a launcher that
+        // still refuses: the game's own program then starts directly, which is a start without Steam's client.
+        if let layout = unrealLayouts[appID], layout.ownProgram {
+            let on = direct && entry.steamProgramSource == Self.unrealSource
+            settings.append(Self.toggle("unrealdirect", "Skip the Unreal launcher", on,
+                                        note: "For a game that stops with \"The following component(s) are required to run this program\". "
+                                            + "BCD starts the game's own program (\(layout.shipping.split(separator: "/").last.map(String.init) ?? layout.shipping)) itself, "
+                                            + "without Steam's client: a game that needs Steam while it runs won't start this way. Off: the game starts as usual."))
         }
         if DockInstallers.choiceEnabled, dock.installPrograms[appID] != nil {
             settings.append(BCDGameSetting(id: "installs", title: "One-time installs", kind: .choice([
@@ -933,6 +949,23 @@ import UniformTypeIdentifiers
         }
         resolveProgram(game)
         readDockOptions(game)
+        readUnrealLayout(game)
+    }
+
+    /// Mhsbrian fork (2026-11-14): LibraryEntry.steamProgramSource for a program set by "Skip the Unreal launcher".
+    static let unrealSource = "unreal"
+
+    /// Mhsbrian fork (2026-11-14): whether the game's install folder has Unreal Engine's layout, for "Skip the Unreal launcher": two
+    /// folder levels are listed, off the main thread. A game without it shows no such row.
+    private func readUnrealLayout(_ game: BCDGame) {
+        guard let entry = entry(for: game), let appID = entry.steamAppID else { return }
+        let folder = LibraryModel.drive.appendingPathComponent(entry.relativePath, isDirectory: true)
+        Task { [weak self] in
+            let found = await Task.detached(priority: .userInitiated) { UnrealGame.layout(in: folder) }.value
+            guard let self, self.unrealLayouts[appID] != found else { return }
+            self.unrealLayouts[appID] = found
+            self.onChange?()
+        }
     }
 
     /// The entries of Steam's launch configuration a Dock start can run, for "Steam launch option": from the cached library
@@ -1096,6 +1129,30 @@ import UniformTypeIdentifiers
                 entry.steamProgramSource = "choice"
             }
             LogStore.shared.log("[steam-start] app=\(appID(game) ?? 0) program=choice")
+        case "unrealdirect":
+            // On: "The game's own program" with the Shipping program picked. Off: back to BCD Dock, as a game that never set it.
+            guard let entry = entry(for: game), let id = entry.steamAppID else { return }
+            if on {
+                guard let layout = unrealLayouts[id], layout.ownProgram else { return }
+                change(game) { changed in
+                    changed.steamStart = SteamDirectStart.mode
+                    changed.steamProgram = layout.shipping
+                    changed.steamProgramArguments = nil
+                    changed.steamProgramFolder = nil
+                    changed.steamProgramSource = Self.unrealSource
+                }
+                resolveProgram(game)   // the Program row's list
+            } else {
+                guard entry.steamProgramSource == Self.unrealSource else { return }
+                change(game) { changed in
+                    changed.steamStart = nil
+                    changed.steamProgram = nil
+                    changed.steamProgramArguments = nil
+                    changed.steamProgramFolder = nil
+                    changed.steamProgramSource = nil
+                }
+            }
+            LogStore.shared.log("[steam-start] app=\(id) unreal-launcher=\(on ? "skipped: the game's own program starts directly, without Steam's client" : "used: BCD Dock starts the game")")
         case "launchoption":
             let key = Int(value)
             guard value.isEmpty || (key != nil && key! >= 0), let id = appID(game) else { return }
@@ -1136,7 +1193,7 @@ import UniformTypeIdentifiers
         guard let entry = entry(for: game), entry.startsSteamGameDirectly, let appID = entry.steamAppID,
               resolving.insert(appID).inserted else { return }
         let folder = LibraryModel.drive.appendingPathComponent(entry.relativePath, isDirectory: true)
-        let picked = entry.steamProgramSource == "choice" ? entry.steamProgram : nil
+        let picked = LibraryEntry.keepsSteamProgram(entry.steamProgramSource) ? entry.steamProgram : nil
         Task { [weak self] in
             let installed = await Task.detached(priority: .userInitiated) { SteamDirectStart.programs(in: folder) }.value
             self?.programs[appID] = installed
