@@ -3,6 +3,8 @@
 // Madeira Converter Exception: see LICENSE-EXCEPTION.md
 // Portions copyright 2026 Russell Barton: code taken from https://github.com/thebcd69/bcd-games (pull request #46 by rbarton124)
 // under GPL-3.0-or-later with the Madeira Converter Exception and modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
+// Modified by Mhsbrian (fork of BCD), 2026-11-14: a game's Visual C++ 2015-2022 setup is provided by BCD, not run
+// (isVisualCppRedist, VCRuntimeMarker, DockInstallers.fileVersion; MADEIRA_DOCK_VCREDIST_PROVIDED).
 
 import Foundation
 
@@ -253,6 +255,117 @@ enum SteamInstallScripts {
 
 // MARK: - Planning, the batch and its results
 
+/// Mhsbrian fork (2026-11-14): the "Installed" markers of Microsoft's Visual C++ 2015-2022 runtime,
+/// HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\<arch>, in a prefix's system.reg. A fresh prefix marks the x64 and x86
+/// runtimes installed (prefix-template.tar.gz, 14.42). When a game's own setup is not run because BCD provides the runtime
+/// (DockInstallers.prepare), the marker is raised to that setup's version, which is what the setup would have written: a launcher
+/// that compares the marker with the version it was built against sees the same number as after a real install. A marker is only
+/// ever raised, never lowered or removed. Only while no session runs, like every other write to the .reg files.
+enum VCRuntimeMarker {
+    static let root = "Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\"
+    static let wowRoot = "Software\\Wow6432Node\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\"
+
+    /// The keys Microsoft's setup for `arch` marks on 64-bit Windows: the x64 runtime in both registry views, the x86 runtime in the
+    /// 32-bit view. None for another architecture (the ARM64 marker is the session's own, env.MADEIRA_VCRT_ARM64_KEY).
+    static func keys(_ arch: String) -> [String] {
+        switch arch {
+        case "x64": return [root + "x64", wowRoot + "x64"]
+        case "x86": return [wowRoot + "x86"]
+        default: return []
+        }
+    }
+
+    /// "v14.42.34433.00" or "14.42.34433.0" as numbers (major, minor, build, revision); nil for anything else.
+    static func parse(_ text: String) -> [Int]? {
+        var body = Substring(text.trimmingCharacters(in: .whitespaces))
+        if body.hasPrefix("v") || body.hasPrefix("V") { body = body.dropFirst() }
+        let parts = body.split(separator: ".", omittingEmptySubsequences: false)
+        guard (2...4).contains(parts.count) else { return nil }
+        var numbers: [Int] = []
+        for part in parts {
+            guard !part.isEmpty, part.count <= 6, part.allSatisfy({ $0.isASCII && $0.isNumber }), let number = Int(part) else { return nil }
+            numbers.append(number)
+        }
+        while numbers.count < 4 { numbers.append(0) }
+        return numbers
+    }
+
+    /// Whether version `a` is newer than `b` (four numbers each).
+    static func newer(_ a: [Int], than b: [Int]) -> Bool {
+        for (x, y) in zip(a, b) where x != y { return x > y }
+        return false
+    }
+
+    /// The version a key's "Version" value names in a Wine .reg text; nil when the key or the value is absent or unreadable.
+    static func version(of key: String, in text: String) -> [Int]? {
+        let lines = text.components(separatedBy: "\n")
+        let header = ("[" + SteamInstallScripts.escape(key) + "]").lowercased()
+        guard let start = lines.firstIndex(where: { $0.lowercased().hasPrefix(header) }) else { return nil }
+        var index = start + 1
+        while index < lines.count, !lines[index].hasPrefix("[") {
+            let line = lines[index]
+            if line.lowercased().hasPrefix("\"version\"=\""), line.hasSuffix("\"") {
+                return parse(String(line.dropFirst(11).dropLast()))
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    /// The .reg text with the markers of `arch` at `version` where they were older or absent, and how many keys changed.
+    /// The values are the ones Microsoft's setup writes: Installed, Major, Minor, Bld, Rbld and Version ("v14.44.35211.00").
+    static func raise(_ arch: String, to version: [Int], in text: String, now: Int) -> (text: String, changed: Int) {
+        guard version.count == 4, version[0] == 14, version.allSatisfy({ (0...0xffff).contains($0) }) else { return (text, 0) }
+        var lines = text.components(separatedBy: "\n")
+        var changed = 0
+        let values: [(name: String, line: String)] = [
+            ("Bld", String(format: "\"Bld\"=dword:%08x", version[2])),
+            ("Installed", "\"Installed\"=dword:00000001"),
+            ("Major", String(format: "\"Major\"=dword:%08x", version[0])),
+            ("Minor", String(format: "\"Minor\"=dword:%08x", version[1])),
+            ("Rbld", String(format: "\"Rbld\"=dword:%08x", version[3])),
+            ("Version", String(format: "\"Version\"=\"v%d.%d.%d.%02d\"", version[0], version[1], version[2], version[3])),
+        ]
+        for key in keys(arch) {
+            let header = "[" + SteamInstallScripts.escape(key) + "]"
+            if let current = self.version(of: key, in: lines.joined(separator: "\n")), !newer(version, than: current) { continue }
+            if let start = lines.firstIndex(where: { $0.lowercased().hasPrefix(header.lowercased()) }) {
+                for value in values {
+                    var end = start + 1
+                    while end < lines.count, !lines[end].hasPrefix("[") { end += 1 }
+                    let name = ("\"" + value.name + "\"=").lowercased()
+                    if let index = (start + 1..<end).first(where: { lines[$0].lowercased().hasPrefix(name) }) {
+                        lines[index] = value.line
+                    } else {
+                        var at = end
+                        while at > start + 1, lines[at - 1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { at -= 1 }
+                        lines.insert(value.line, at: at)
+                    }
+                }
+            } else {
+                while let last = lines.last, last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lines.removeLast() }
+                lines += ["", header + " \(now)"] + values.map(\.line) + [""]
+            }
+            changed += 1
+        }
+        return (lines.joined(separator: "\n"), changed)
+    }
+
+    /// Raises the markers in the prefix's system.reg (a .bcd-bak copy is kept once, as SteamInstallScripts does). Returns the number
+    /// of keys changed; 0 for a prefix whose registry is not seeded yet. Only while no session runs.
+    @discardableResult
+    static func raise(_ arch: String, to version: [Int], prefix: URL) throws -> Int {
+        let registry = prefix.appendingPathComponent("system.reg")
+        guard let contents = try? Data(contentsOf: registry), !contents.isEmpty else { return 0 }
+        let (updated, changed) = raise(arch, to: version, in: String(decoding: contents, as: UTF8.self), now: Int(Date().timeIntervalSince1970))
+        guard changed > 0 else { return 0 }
+        let backup = registry.appendingPathExtension("bcd-bak")
+        if !FileManager.default.fileExists(atPath: backup.path) { try? FileManager.default.copyItem(at: registry, to: backup) }
+        try Data(updated.utf8).write(to: registry, options: .atomic)
+        return changed
+    }
+}
+
 /// What a Dock start does with one install-script program.
 enum DockInstallStatus: String, Sendable {
     case done          // already recorded in the prefix's registry
@@ -433,6 +546,28 @@ enum DockInstallScripts {
         return file == "dxsetup.exe" || file == "dxwebsetup.exe"
     }
 
+    /// Mhsbrian fork (2026-11-14): whether an install-script program is Microsoft's Visual C++ redistributable setup, by the file names
+    /// Microsoft and Steam's shared redistributables give it: VC_redist.x64.exe, vc_redist.x86.exe, vcredist_x64.exe and the like. The
+    /// name alone covers every edition from 2005 on; which edition a file is comes from the file itself (DockInstallers.fileVersion:
+    /// 14.x is the 2015-2022 runtime). Only that edition is acted on (DockInstallers.prepare: provided by BCD). BCD links Wine's own
+    /// msvcp140, vcruntime140, concrt140 and vcomp140 families into system32, sysx64 and syswow64 again at every session start
+    /// (WineProcessBridge.m: each name the bundle ships is removed and linked), so the files Microsoft's setup writes there are
+    /// replaced before the game loads one, while the setup itself costs a session of its own and a restart of BCD.
+    static func isVisualCppRedist(_ executable: String) -> Bool {
+        let name = fileName(executable)
+        return name.hasSuffix(".exe") && (name.hasPrefix("vc_redist") || name.hasPrefix("vcredist"))
+    }
+
+    /// Mhsbrian fork (2026-11-14): the architecture such a setup installs for ("x64", "x86", "arm64"), from its file name; nil when
+    /// the name does not say (the setup program itself is 32-bit for every architecture, so its PE header cannot tell).
+    static func visualCppRedistArch(_ executable: String) -> String? {
+        let name = fileName(executable)
+        if name.contains("arm64") { return "arm64" }
+        if name.contains("x64") || name.contains("amd64") { return "x64" }
+        if name.contains("x86") { return "x86" }
+        return nil
+    }
+
     /// madeira-bcd (round 626, agent A1 S7): the one-time installs the game's own settings mark as provided: the names of
     /// `env.MADEIRA_DOCK_INSTALL_SKIP` (the last such line wins), as the [dock-installers] lines print them (program=directx),
     /// separated by commas, semicolons or spaces, lower-cased. DirectX's runtime setup fails at the first start of six games while BCD
@@ -465,6 +600,7 @@ enum DockInstallScripts {
     /// "Wine Mono" for a .NET Framework, "the installed launcher" for a shared launcher's installer, "BCD (Capcom's codec notice)" for Capcom's notice.
     static func provider(_ process: SteamInstallProcess) -> String {
         if sharedLauncherInstallers[fileName(process.executable)] != nil { return launcherProvider }
+        if isVisualCppRedist(process.executable) { return "BCD" }   // Mhsbrian fork (2026-11-14): the Visual C++ 2015-2022 setup
         return isDirectXSetup(process.executable) ? "BCD" : isCapcomCodecNotice(process.executable) ? "BCD (Capcom's codec notice)" : "Wine Mono"
     }
     static let launcherProvider = "the installed launcher"
@@ -789,6 +925,10 @@ enum DockSessionOutcome: String, Sendable {
 /// - `MADEIRA_DOCK_DIRECTX_FIRST` (madeira-bcd, round 630; off unless set): with DIRECTX_PROVIDED on, DirectX's setup
 ///   (isDirectXSetup, whatever the install-script entry is called) is recorded as provided at the FIRST start too, so that start
 ///   plays the game instead of running only the one-time installs (it failed in 36 of 41 logged runs: A2 S14).
+/// - `MADEIRA_DOCK_VCREDIST_PROVIDED` (Mhsbrian fork, 2026-11-14): a Visual C++ 2015-2022 setup (its own file version is 14.x) is not
+///   run: BCD links Wine's runtime DLLs into the prefix again at every start, so the setup's files are never the ones a game loads.
+///   Its record is written like a finished run's and the prefix's "Installed" marker is raised to the setup's version
+///   (VCRuntimeMarker). Off: the setup runs in a session of its own, as before. Older editions (2005 to 2013) always run.
 /// - `MADEIRA_DOCK_INSTALL_RETRY` (madeira-bcd): installs whose session never started a single program (the app was
 ///   closed first, the session failed to boot) are offered once more at the next start instead of being skipped for good
 ///   (off: they are skipped, as before). A program that failed or never finished stays skipped.
@@ -997,6 +1137,28 @@ enum DockInstallers {
         var folder: ObjCBool = false
         guard let url = resolve(windowsPath, drive: drive) else { return false }
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &folder) && !folder.boolValue
+    }
+
+    /// Mhsbrian fork (2026-11-14): a Windows program's own file version (major, minor, build, revision), from the VS_FIXEDFILEINFO
+    /// of its version resource, found by its signature in the first 8 MB (a setup's resources come before the packages attached to
+    /// it); nil when unreadable or without one. Microsoft's Visual C++ setups carry the runtime's version: 14.x for 2015-2022, 12.x
+    /// for 2013, 11.x for 2012, 10.x for 2010, 9.x for 2008.
+    nonisolated static func fileVersion(_ file: URL) -> [Int]? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 8 << 20), data.count >= 64, data[data.startIndex] == 0x4d, data[data.startIndex + 1] == 0x5a else { return nil }
+        return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> [Int]? in
+            var offset = 0
+            while offset + 16 <= raw.count {
+                // VS_FIXEDFILEINFO: dwSignature 0xFEEF04BD, dwStrucVersion, dwFileVersionMS, dwFileVersionLS (little-endian, 4-byte aligned).
+                if raw[offset] == 0xbd, raw[offset + 1] == 0x04, raw[offset + 2] == 0xef, raw[offset + 3] == 0xfe {
+                    func word(_ at: Int) -> Int { Int(raw[offset + at]) | Int(raw[offset + at + 1]) << 8 }
+                    return [word(10), word(8), word(14), word(12)]
+                }
+                offset += 4
+            }
+            return nil
+        }
     }
 
     /// The PE machine of an executable (0x14c: 32-bit x86, 0x8664: x64), nil when unreadable.
@@ -1243,6 +1405,19 @@ enum DockInstallers {
         let eaGecko = flag("MADEIRA_DOCK_EA_GECKO")
         let skip = DockInstallScripts.installSkipNames()   // madeira-bcd (round 626, A1 S7): the game's own list of provided installs; empty by default
         let capcomNotice = flag("MADEIRA_DOCK_INSTALLERMESSAGE_PROVIDED")   // madeira-bcd (night round 2026-11-11, A2 S5): 0 runs Capcom's notice as before
+        // Mhsbrian fork (2026-11-14): a Visual C++ 2015-2022 setup is provided by BCD. What it installs for a game is the msvcp140,
+        // vcruntime140, concrt140 and vcomp140 families, and BCD links Wine's own into system32, sysx64 and syswow64 at every session
+        // start, over whatever is there. Running it gave the game nothing and cost a start that ran only the installs plus a restart
+        // of BCD. Which edition a setup is comes from its own file version, never from the entry's name: 14.x only.
+        let visualCppProvided = flag("MADEIRA_DOCK_VCREDIST_PROVIDED")   // 0: a Visual C++ 2015-2022 setup runs in a session of its own, as before
+        var vcVersions: [String: [Int]] = [:]
+        if visualCppProvided {
+            for process in found where DockInstallScripts.isVisualCppRedist(process.executable) && vcVersions[process.executable] == nil {
+                if let file = resolve(process.executable, drive: drive), let version = fileVersion(file), version.first == 14 {
+                    vcVersions[process.executable] = version
+                }
+            }
+        }
         let items = DockInstallScripts.plan(found,
                                             done: { DockInstallScripts.marked($0, in: registry[$0.hive] ?? "") },
                                             exists: { resolve($0, drive: drive) != nil },
@@ -1257,6 +1432,7 @@ enum DockInstallers {
                                                         && (directXFirst || failedBefore.contains($0.run.name)))
                                                     || skip.contains(DockInstallScripts.label($0.run).lowercased())
                                                     || (capcomNotice && DockInstallScripts.isCapcomCodecNotice($0.executable))
+                                                    || vcVersions[$0.executable] != nil
                                                     || DockInstallScripts.installsPresentLauncher($0.executable, exists: { path in isFile(path, drive: drive) })
                                             })
         let providedRuns = DockInstallScripts.providedRuns(items)
@@ -1264,6 +1440,20 @@ enum DockInstallers {
         if !providedRuns.record.isEmpty {
             do { providedWritten = try SteamInstallScripts.mark(providedRuns.record, prefix: prefix) }
             catch { LogStore.shared.log("[dock-installers] app=\(app) records of the programs Wine Mono or BCD provides not written: \(error.localizedDescription)", level: .error) }
+        }
+        // Mhsbrian fork (2026-11-14): the marker a Visual C++ setup that was not run would have written (VCRuntimeMarker).
+        for item in items where item.status == .provided && !providedRuns.held.contains(item.process.run) {
+            guard let version = vcVersions[item.process.executable],
+                  let arch = DockInstallScripts.visualCppRedistArch(item.process.executable), !VCRuntimeMarker.keys(arch).isEmpty else { continue }
+            let text = version.map(String.init).joined(separator: ".")
+            do {
+                let raised = try VCRuntimeMarker.raise(arch, to: version, prefix: prefix)
+                LogStore.shared.log("[vcrt] app=\(app) HKLM\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\\(arch): "
+                    + (raised > 0 ? "Installed=1, raised to \(text) in \(raised) view(s), the version of the game's setup"
+                                  : "already at \(text) or newer, left as it is"))
+            } catch {
+                LogStore.shared.log("[vcrt] app=\(app) the Visual C++ \(arch) marker could not be raised to \(text): \(error.localizedDescription)", level: .error)
+            }
         }
         var pending = items.filter { $0.status == .pending }.map(\.process)
         // Programs the game's last batch started but never saw exit (absorbResults).
@@ -1353,6 +1543,11 @@ enum DockInstallers {
                     LogStore.shared.log("[dock-installers] app=\(app) program=\(DockInstallScripts.label(run)) skipped: provided by BCD; " +
                                         "file=\(file) is Capcom's codec notice, a .NET program that cannot run under Wine Mono and installs nothing " +
                                         "(MADEIRA_DOCK_INSTALLERMESSAGE_PROVIDED=0 runs it); record: \(recorded)")
+                } else if let version = vcVersions[item.process.executable] {
+                    LogStore.shared.log("[dock-installers] app=\(app) program=\(DockInstallScripts.label(run)) skipped: provided by BCD; " +
+                                        "file=\(file) is Microsoft's Visual C++ 2015-2022 setup, version \(version.map(String.init).joined(separator: ".")), " +
+                                        "and BCD links Wine's own runtime DLLs into the prefix at every start, over the files it would write " +
+                                        "(MADEIRA_DOCK_VCREDIST_PROVIDED=0 runs it); record: \(recorded)")
                 } else if DockInstallScripts.provider(item.process) == "BCD" {
                     let why = failedBefore.contains(run.name) ? "it failed in this game before" : "env.MADEIRA_DOCK_DIRECTX_FIRST = 1 skips it at the first start"
                     LogStore.shared.log("[dock-installers] app=\(app) program=\(DockInstallScripts.label(run)) skipped: provided by BCD; " +
