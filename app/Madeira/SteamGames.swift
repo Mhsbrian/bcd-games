@@ -3,6 +3,7 @@
 // Madeira Converter Exception: see LICENSE-EXCEPTION.md
 // Modified by BCD (thebcd69), 2026-10-24: Steam launch option choice for a Dock start (SteamDirectStart.dockOptions, dockLaunch).
 // Modified by BCD (thebcd69), 2026-11-05: `SteamGamesModel.branches`, the beta branch each install record names (version selection).
+// Modified by Mhsbrian (fork of BCD), 2026-11-14: `UnrealGame`, an Unreal Engine game's folder layout (its launcher and its own program).
 // Portions copyright 2026 wamei: code taken from https://github.com/willfaust/Madeira (pull request #381)
 // under GPL-3.0-or-later and modified for BCD in October and November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 Connor Gow: code taken from https://github.com/willfaust/Madeira (pull request #464)
@@ -470,6 +471,77 @@ enum SteamDirectStart {
         if updating { return "This game is still downloading. You can play once it finishes." }
         if (program ?? "").isEmpty { return "No program is set for this game. Pick one on the game's page, under Steam › Program." }
         return nil
+    }
+}
+
+// MARK: - Unreal Engine games
+
+/// Mhsbrian fork (2026-11-14): the layout Unreal Engine packages a Windows game in. The install folder holds a small launcher
+/// (Unreal's BootstrapPackagedGame, named after the game) and the game itself under `<Project>/Binaries/Win64/`, named
+/// `<Project>-Win64-Shipping`. The launcher checks that Microsoft's Visual C++ runtime is installed, for the machine it is on, before
+/// it starts the game, and stops with "The following component(s) are required to run this program" when the registry does not say
+/// so. BCD reports an ARM64 machine, so it asks for the ARM64 runtime (bcd-games issues #2 and #13). Nothing is told by a game's
+/// name: only the folder layout is read, two levels deep.
+enum UnrealGame {
+    struct Layout: Equatable, Sendable {
+        /// The game's own program, relative to the install folder and spelt as on disk: for a project called Pagoda,
+        /// Pagoda/Binaries/Win64/Pagoda-Win64-Shipping with its extension.
+        var shipping: String
+        /// The launchers in the install folder itself (Pagoda's own, named after it), sorted; empty when the folder has none.
+        var launchers: [String]
+        /// Whether `shipping` is the project's own program, which starts on its own. False for a game without code of its own,
+        /// which runs the engine's shared program (under Engine/) and needs its launcher to name the project.
+        var ownProgram: Bool
+    }
+
+    /// The ending of the game's own program name, before its extension, lowercased.
+    static let shippingSuffix = "-win64-shipping"
+
+    /// The layout of the game in `root`, or nil when it is not packaged this way. With several projects in one folder the one
+    /// named like a launcher wins, then the largest program; the engine's shared program only when no project has its own.
+    static func layout(in root: URL) -> Layout? {
+        let fm = FileManager.default
+        guard let top = try? fm.contentsOfDirectory(atPath: root.path) else { return nil }
+        func isProgram(_ name: String) -> Bool { (name as NSString).pathExtension.lowercased() == "exe" }
+        func isFolder(_ url: URL) -> Bool {
+            var directory: ObjCBool = false
+            return fm.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
+        }
+        func child(_ folder: URL, _ wanted: String) -> URL? {
+            guard let names = try? fm.contentsOfDirectory(atPath: folder.path),
+                  let name = names.first(where: { $0.caseInsensitiveCompare(wanted) == .orderedSame }) else { return nil }
+            let url = folder.appendingPathComponent(name, isDirectory: true)
+            return isFolder(url) ? url : nil
+        }
+        let launchers = top.filter { isProgram($0) && !isFolder(root.appendingPathComponent($0)) }.sorted()
+        let stems = Set(launchers.map { ($0 as NSString).deletingPathExtension.lowercased() })
+        var found: [(path: String, own: Bool, named: Bool, size: Int)] = []
+        for project in top.sorted() where !project.hasPrefix(".") {
+            let folder = root.appendingPathComponent(project, isDirectory: true)
+            guard isFolder(folder), (try? fm.destinationOfSymbolicLink(atPath: folder.path)) == nil,
+                  let binaries = child(folder, "Binaries"), let win64 = child(binaries, "Win64"),
+                  let names = try? fm.contentsOfDirectory(atPath: win64.path) else { continue }
+            for name in names.sorted() where isProgram(name)
+                && (name as NSString).deletingPathExtension.lowercased().hasSuffix(shippingSuffix) {
+                let file = win64.appendingPathComponent(name)
+                guard !isFolder(file) else { continue }
+                let size = ((try? fm.attributesOfItem(atPath: file.path))?[.size] as? NSNumber)?.intValue ?? 0
+                let relative = [project, binaries.lastPathComponent, win64.lastPathComponent, name].joined(separator: "/")
+                found.append((relative, project.caseInsensitiveCompare("Engine") != .orderedSame, stems.contains(project.lowercased()), size))
+            }
+        }
+        guard let best = found.max(by: { a, b in
+            a.own != b.own ? !a.own : a.named != b.named ? !a.named : a.size != b.size ? a.size < b.size : a.path > b.path
+        }) else { return nil }
+        return Layout(shipping: best.path, launchers: launchers, ownProgram: best.own)
+    }
+
+    /// The session's ARM64 Visual C++ marker switch (env.MADEIRA_VCRT_ARM64_KEY) for a game with this layout: "1" when nothing
+    /// set it, so Unreal's launcher finds the runtime it asks for and starts the game. A value already there is kept, and a line
+    /// in the game's settings or bcd.cfg is exported after this and wins, `= 0` included. nil: nothing to set.
+    static func markerSwitch(layout: Layout?, current: String?) -> String? {
+        guard layout != nil, (current ?? "").isEmpty else { return nil }
+        return "1"
     }
 }
 

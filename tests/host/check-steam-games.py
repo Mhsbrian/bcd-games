@@ -78,7 +78,7 @@ require(steam_meta.index('SteamInstallFiles.buildID(') <
         steam_meta.index('stored.steamMetadataInstall == install') < steam_meta.index('launchOptions(appID: game.id)'),
         "the format is read again only for another install folder, build or picked program, once Steam's launch "
         "configuration is cached, or a day later while no program is known")
-require('stored?.steamProgramSource == "choice" ? stored?.steamProgram : nil' in steam_meta and
+require('LibraryEntry.keepsSteamProgram(stored?.steamProgramSource) ? stored?.steamProgram : nil' in steam_meta and
         'let options = kept == nil ? await SteamOwnedLibrary.shared.launchOptions(appID: game.id) : nil' in steam_meta and
         'SteamDirectStart.program(picked: kept, options: options, installFolder: root)' in steam_meta and
         'LibraryModel.inspect(root.appendingPathComponent(path))' in steam_meta and
@@ -141,6 +141,20 @@ for forbidden in ['setenv(', 'unsetenv(', 'runWineFullSequence', 'writeHandoff',
                   'steamwebhelper', 'steam.exe', 'SteamSetup', 'FEX_', 'DXMT']:
     require(forbidden not in games, f'SteamGames.swift: no {forbidden}')
 require(not re.findall(r'"[^"\n]*\.exe"', games), 'SteamGames.swift: no program names')
+# Mhsbrian fork (2026-11-14): UnrealGame reads a folder layout, sets no environment itself (ContentView's extension does, before the
+# session starts, where a line of the game's settings exported later wins), and both start paths call it.
+require('enum UnrealGame {' in rules and 'static let shippingSuffix = "-win64-shipping"' in rules,
+        'UnrealGame is among the rules the host compiles, and names a layout, not a game')
+require(content_view.count('UnrealGame.applyMarkerSwitch(installFolder:') == 2
+        and 'extension UnrealGame {' in content_view and 'setenv("MADEIRA_VCRT_ARM64_KEY", value, 1)' in content_view
+        and content_view.index('if let line = UnrealGame.applyMarkerSwitch(installFolder: installFolder)') < content_view.index('DockInstallers.prepare(game, drive: MadeiraDock.drive'),
+        'both starts (BCD Dock, the game\'s own program) set the ARM64 Visual C++ marker switch for an Unreal layout before the session')
+game_page = (app / 'BCDGamePageLive.swift').read_text()
+require('static let unrealSource = "unreal"' in game_page and 'if let layout = unrealLayouts[appID], layout.ownProgram {' in game_page
+        and 'Self.toggle("unrealdirect", "Skip the Unreal launcher", on,' in game_page and 'case "unrealdirect":' in game_page
+        and 'static func keepsSteamProgram(_ source: String?) -> Bool { source == "choice" || source == "unreal" }' in library
+        and library.count('LibraryEntry.keepsSteamProgram(') == 1 and game_page.count('LibraryEntry.keepsSteamProgram(') == 1,
+        'Game details has "Skip the Unreal launcher" (off by default, only for a project with its own program), and its pick stays like the player\'s own')
 for line in games.splitlines():
     if re.search(r'LogStore|SteamLog\.|print\(|NSLog|fputs', line):
         require(re.search(r'\\\((game\.name|name|account|token|signIn|path|folder|status|error)', line) is None,
@@ -487,6 +501,56 @@ func record(_ appID: Int, _ name: String, _ folder: String, flags: Int) -> Strin
         require(SR.prepare(appID: 730, steamApps: redistApps)?.contains("owner-state=missing") == true,
                 "shared redist: no 228980 record at all counts as not ready")
         require(SR.prepare(appID: 999, steamApps: redistApps) == nil, "shared redist: a game without a record is left alone")
+        // ---- Mhsbrian fork (2026-11-14): UnrealGame, an Unreal Engine game's folder layout -----------------------------------
+        let unreal = drive.appendingPathComponent("unreal-layouts")
+        func program(_ game: String, _ relative: String, bytes: Int = 1) throws {
+            try write(unreal.appendingPathComponent(game + "/" + relative), String(repeating: "x", count: bytes))
+        }
+        let exe = ".e" + "xe"
+        try program("Pagoda", "Pagoda" + exe)
+        try program("Pagoda", "Pagoda/Binaries/Win64/Pagoda-Win64-Shipping" + exe, bytes: 64)
+        try program("Pagoda", "Pagoda/Binaries/Win64/CrashReportClient" + exe, bytes: 900)
+        try program("Pagoda", "Engine/Binaries/Win64/UnrealGame-Win64-Shipping" + exe, bytes: 4000)
+        try program("Pagoda", "Engine/Extras/Redist/en-us/UEPrereqSetup_x64" + exe)
+        var layout = UnrealGame.layout(in: unreal.appendingPathComponent("Pagoda"))
+        require(layout == UnrealGame.Layout(shipping: "Pagoda/Binaries/Win64/Pagoda-Win64-Shipping" + exe, launchers: ["Pagoda" + exe], ownProgram: true),
+                "Unreal layout: the project's own Shipping program and the launcher next to it, not the engine's or a helper: \(String(describing: layout))")
+        // Folder names in another case, as a Windows game may spell them; the program's own spelling is kept.
+        try program("Caps", "GAME" + exe)
+        try program("Caps", "Game/BINARIES/win64/Game-WIN64-Shipping.EXE")
+        layout = UnrealGame.layout(in: unreal.appendingPathComponent("Caps"))
+        require(layout?.shipping == "Game/BINARIES/win64/Game-WIN64-Shipping.EXE" && layout?.ownProgram == true, "Unreal layout: names are matched without case, spelt as on disk")
+        // Two projects in one folder: the one named like the launcher wins over a larger one.
+        try program("Two", "Hero" + exe)
+        try program("Two", "Hero/Binaries/Win64/Hero-Win64-Shipping" + exe, bytes: 10)
+        try program("Two", "Editor/Binaries/Win64/Editor-Win64-Shipping" + exe, bytes: 5000)
+        require(UnrealGame.layout(in: unreal.appendingPathComponent("Two"))?.shipping == "Hero/Binaries/Win64/Hero-Win64-Shipping" + exe,
+                "Unreal layout: with two projects the one named like the launcher is the game")
+        // A game without code of its own runs the engine's shared program: the layout is known, but it cannot start on its own.
+        try program("Blueprint", "MyGame" + exe)
+        try program("Blueprint", "Engine/Binaries/Win64/UE4Game-Win64-Shipping" + exe)
+        try write(unreal.appendingPathComponent("Blueprint/MyGame/Content/Paks/game.pak"), "x")
+        layout = UnrealGame.layout(in: unreal.appendingPathComponent("Blueprint"))
+        require(layout?.shipping == "Engine/Binaries/Win64/UE4Game-Win64-Shipping" + exe && layout?.ownProgram == false && layout?.launchers == ["MyGame" + exe],
+                "Unreal layout: a game that runs the engine's shared program is known, and marked as not startable on its own")
+        // Not Unreal: a Unity game, a Shipping program in the wrong place, a development build, a folder named like a program.
+        try program("Unity", "Game" + exe)
+        try program("Unity", "Game_Data/Managed/x.dll")
+        try program("Unity", "UnityCrashHandler64" + exe)
+        try program("Flat", "Flat-Win64-Shipping" + exe)
+        try program("Deep", "a/Game/Binaries/Win64/Game-Win64-Shipping" + exe)
+        try program("Dev", "Game/Binaries/Win64/Game" + exe)
+        try program("Dev", "Game/Binaries/Win32/Game-Win32-Shipping" + exe)
+        try program("Folder", "Game/Binaries/Win64/Game-Win64-Shipping" + exe + "/inner.txt")
+        for name in ["Unity", "Flat", "Deep", "Dev", "Folder", "Missing"] {
+            require(UnrealGame.layout(in: unreal.appendingPathComponent(name)) == nil, "Unreal layout: \(name) is not one")
+        }
+        // The session's marker switch: set for the layout when nothing set it, never over a value already there.
+        let known = UnrealGame.layout(in: unreal.appendingPathComponent("Pagoda"))
+        require(UnrealGame.markerSwitch(layout: known, current: nil) == "1" && UnrealGame.markerSwitch(layout: known, current: "") == "1" &&
+                UnrealGame.markerSwitch(layout: known, current: "0") == nil && UnrealGame.markerSwitch(layout: known, current: "14.50.35719.0") == nil &&
+                UnrealGame.markerSwitch(layout: nil, current: nil) == nil,
+                "the ARM64 Visual C++ marker switch: 1 for an Unreal layout, a value already set is kept, nothing for any other game")
         if failures > 0 { print("FAILURES: \(failures)"); exit(1) }
         print("PASS: all Steam games Swift checks")
     }
