@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the native Duo interface's Settings is shown inside its shell, and the window's geometry is printed for the preview tool.
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
@@ -81,6 +82,7 @@ struct BCDPreviewApp: App {
                     pressButtons(UserDefaults.standard.string(forKey: "BCDButtons"))
                     lockOrientation()
                     followSceneWidth()
+                    reportGeometry()
                     // tools/ui-preview.py waits for this line before it photographs the screen.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         print("BCDPreview: ready")
@@ -99,7 +101,8 @@ struct BCDPreviewApp: App {
             let section = UserDefaults.standard.string(forKey: "BCDSection")
                 .flatMap { BCDSettingsSection(name: String($0.split(separator: "+").first ?? "")) }
             if BCDDuoFeatures.active {
-                BCDDuoSettingsRoot(store: store, close: {}, section: section).environmentObject(focus)
+                // Settings is a tab of the native Duo interface: shown inside the shell that holds it, as the app does.
+                BCDFrontEnd(store: store, focus: focus, startsInSettings: true, settingsSection: section)
             } else {
                 BCDSettingsRoot(store: store, close: {}, section: section).environmentObject(focus)
             }
@@ -173,6 +176,23 @@ struct BCDPreviewApp: App {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
             BCDFoldableSceneClass.follow(scene: scene, width: width)
+        }
+    }
+
+    /// One line about the window once the screen has turned, for tools/ui-preview.py to print beside the picture's name: what a
+    /// device nobody here can hold (the iPhone Duo simulator) gives the app. Size, safe area, status bar, size classes, model.
+    private func reportGeometry() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first else { return }
+            let safe = window.safeAreaInsets, traits = window.traitCollection
+            func word(_ c: UIUserInterfaceSizeClass) -> String { c == .regular ? "regular" : c == .compact ? "compact" : "unspecified" }
+            print(String(format: "BCDPreview: geometry window=%.0fx%.0f safe=t%.0f,l%.0f,b%.0f,r%.0f statusBar=%.0fx%.0f classes=%@,%@ scale=%.0f model=%@ windows=%d",
+                         window.bounds.width, window.bounds.height, safe.top, safe.left, safe.bottom, safe.right,
+                         scene.statusBarManager?.statusBarFrame.width ?? 0, scene.statusBarManager?.statusBarFrame.height ?? 0,
+                         word(traits.horizontalSizeClass), word(traits.verticalSizeClass), window.screen.scale,
+                         BCDFoldableDevice.machine, scene.windows.count))
+            fflush(stdout)
         }
     }
 

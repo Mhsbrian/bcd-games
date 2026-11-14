@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the sample controls follow the window's size as UIKit reports it, and the size they were laid out for is printed for the preview tool.
 
 import SwiftUI
 import UIKit
@@ -195,12 +196,16 @@ import UIKit
 struct BCDTouchPreviewRoot: View {
     let spec: String
     let store: BCDStore
+    @State private var window = CGSize.zero
 
     var body: some View {
         GeometryReader { geo in
-            BCDTouchPreviewCase(spec: spec, screen: geo.size, insets: BCDTouchSafeArea.insets())
+            // The window's own size once UIKit has said it (BCDTouchWindowSize): on the iPhone Duo simulator this reader kept the
+            // upright 466x678 after the turn, and the sample's landscape picture was the upright layout in a 678x466 window.
+            BCDTouchPreviewCase(spec: spec, screen: window == .zero ? geo.size : window, insets: BCDTouchSafeArea.insets())
         }
         .ignoresSafeArea()
+        .background(BCDTouchWindowSize { window = $0 })
         .background {
             ZStack {
                 Color.black
@@ -213,6 +218,32 @@ struct BCDTouchPreviewRoot: View {
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
     }
+}
+
+/// The window's size as UIKit lays it out, on every layout pass (as the app's touch-controls window follows its bounds).
+private struct BCDTouchWindowSize: UIViewRepresentable {
+    let report: (CGSize) -> Void
+
+    final class Probe: UIView {
+        var report: ((CGSize) -> Void)?
+        private var last = CGSize.zero
+        override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let size = window?.bounds.size, size != last else { return }
+            last = size
+            DispatchQueue.main.async { [report] in report?(size) }
+        }
+    }
+
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.report = report
+        return view
+    }
+    func updateUIView(_ view: Probe, context: Context) { view.report = report }
 }
 
 private struct BCDTouchPreviewCase: View {
@@ -235,6 +266,9 @@ private struct BCDTouchPreviewCase: View {
                         held: spec == "touch" ? ["A": .zero, "LS": CGSize(width: 0.72, height: -0.69)] : [:],
                         select: spec == "touch-editor" ? "Y" : nil, custom: custom)
         if spec == "touch-look" || spec == "touch-text" { model.selected = model.items.first { $0.customText == "INV" }?.id }
+        // For tools/ui-preview.py's log: the size the sample was laid out for (the first iPhone Duo pictures showed a landscape
+        // screen with the upright screen's layout).
+        print(String(format: "BCDPreview: geometry touch laid out for %.0fx%.0f", screen.width, screen.height)); fflush(stdout)
     }
 
     private var editing: Bool { spec == "touch-editor" || spec == "touch-layouts" || spec == "touch-look" || spec == "touch-text" }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a page under 640 pt wide is one column (the iPhone Duo's outer display on its side).
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
 import SwiftUI
@@ -17,11 +18,16 @@ struct BCDDownloadsView: View {
     var nativeControllerNavigation = false
     /// The download whose Cancel waits for an answer.
     @State private var stopping: String?
+    /// The page's width, in points (zero until it is laid out).
+    @State private var width: CGFloat = 0
+
+    /// One column: an upright phone, and a page too narrow for the queue beside the storage column (BCDDownloadsColumns).
+    private var stacked: Bool { layout == .phonePortrait || !BCDDownloadsColumns.sideBySide(width: width, pad: layout == .pad) }
 
     var body: some View {
         ScrollViewReader { reader in
         ScrollView(.vertical, showsIndicators: false) {
-            if layout == .phonePortrait {
+            if stacked {
                 VStack(spacing: 14) { queue; roomCard; finishedCard }
                     .padding(.horizontal, layout.gutter).padding(.vertical, 8)
             } else {
@@ -35,7 +41,7 @@ struct BCDDownloadsView: View {
         .onScrollPhaseChange { _, phase in if nativeControllerNavigation && phase == .interacting { focus.touched() } }
         .onChange(of: focus.focused) { _, _ in reveal(reader) }
         .onChange(of: focus.controllerActive) { _, _ in reveal(reader) }
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in reveal(reader) }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in width = size.width; reveal(reader) }
         }
     }
 
@@ -234,6 +240,18 @@ struct BCDDownloadsView: View {
         }
         .bcdCard(padding: 16)
     }
+}
+
+/// Whether the queue and the storage column stand side by side (pure: tests/host/check-duo-layout.py compiles it). A phone on its
+/// side gives the queue what the 300 pt storage column leaves, and a download's row needs about 310 pt for its sizes, its speed
+/// and its two buttons in one line: the narrowest ordinary iPhone on its side (667 pt) has that, the iPhone Duo's outer display
+/// (678 pt less the 84 pt its clock takes, 594 pt) does not, and the first Duo pictures showed "816 MB…", "23.6 M…" and Pause
+/// above Cancel there. Under `minimum` the page is one column, as on an upright phone. An iPad's layout is as it was.
+enum BCDDownloadsColumns {
+    static let minimum: CGFloat = 640
+
+    /// `width`: the page's, in points; zero (not laid out yet) keeps the two columns.
+    static func sideBySide(width: CGFloat, pad: Bool) -> Bool { pad || width <= 0 || width >= minimum }
 }
 
 /// A download's main button (pure: tests/host/check-parity.py compiles it): Try again for a

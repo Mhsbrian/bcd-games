@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): a value row's width follows its page; the native Duo Settings has one title, 44 pt rows and no doubled Close hint.
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 creeper4004: colour profiles and Settings > Appearance, from thebcd69/bcd-games pull request #27; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 
@@ -750,8 +751,11 @@ struct BCDSettingsDetail: View {
     @EnvironmentObject private var model: BCDSettingsModel
     @EnvironmentObject private var focus: BCDFocus
     @Environment(\.bcdLayout) private var layout
+    @Environment(\.bcdSettingsNativeTitle) private var nativeTitle
     /// The page's visible frame, in the focus ring's coordinates.
     @State private var viewport = CGRect.zero
+    /// The page's width, in points: what a row's value may take depends on it (BCDSettingsValueColumn).
+    @State private var pageWidth: CGFloat = 0
 
     var body: some View {
         if let custom = model.backends.custom[section] {
@@ -767,13 +771,15 @@ struct BCDSettingsDetail: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: layout == .pad ? 22 : 16) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(section.title).font(BCDStyle.title(layout == .pad ? 32 : 24))
+                        // Under a navigation bar that already says the section's name (the native Duo Settings) only the summary.
+                        if !nativeTitle { Text(section.title).font(BCDStyle.title(layout == .pad ? 32 : 24)) }
                         Text(section.summary).font(BCDStyle.body(layout == .pad ? 16 : 14)).foregroundStyle(BCDStyle.textSoft)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(.isHeader)
                     content
                 }
+                .environment(\.bcdSettingsRowWidth, max(0, min(pageWidth, layout == .pad ? 780 : .infinity) - 2 * (layout == .pad ? 28 : 18)))
                 .padding(.horizontal, layout == .pad ? 28 : 18).padding(.top, 10).padding(.bottom, 28)
                 .frame(maxWidth: layout == .pad ? 780 : .infinity, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -803,6 +809,10 @@ struct BCDSettingsDetail: View {
                 viewport = frame
                 keepRingInView(proxy)
             }
+            // The width alone, and not `viewport`: that frame moves while the page settles under a navigation bar. And only a real
+            // change of it: a width on a half point reads 466 and 467 by turns, and rows drawn again for each reading never let
+            // the page settle (it stayed black with the app at 100% of a core, on the simulator).
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if abs($0 - pageWidth) > 2 { pageWidth = $0 } }
         }
     }
 
@@ -1047,6 +1057,9 @@ struct BCDSettingsValueRow: View {
     var enabled = true
     let set: (String) -> Void
     @Environment(\.bcdLayout) private var layout
+    /// The row's width, in points: the page's less its margins (BCDSettingsDetail); zero where nothing says, which is the widths
+    /// rows always had. Never measured on the row itself: its width would then depend on what it decides.
+    @Environment(\.bcdSettingsRowWidth) private var rowWidth
 
     private var index: Int? { choices.firstIndex { $0.value == value } }
     private var shown: String { index.map { choices[$0].label } ?? (value.isEmpty ? "Default" : value) }
@@ -1070,7 +1083,9 @@ struct BCDSettingsValueRow: View {
                         .opacity((index ?? -1) < choices.count - 1 ? 0.8 : 0.25)
                 }
                 .foregroundStyle(BCDStyle.textSoft)
-                .frame(maxWidth: layout == .phonePortrait ? 150 : 230, alignment: .trailing)
+                .frame(maxWidth: BCDSettingsValueColumn.width(row: rowWidth, upright: layout == .phonePortrait), alignment: .trailing)
+                // Its own width (never more than the frame's 230 pt) before the words take theirs.
+                .fixedSize(horizontal: BCDSettingsValueColumn.valueFirst(row: rowWidth, upright: layout == .phonePortrait), vertical: false)
             }
         }
         .disabled(!enabled)
@@ -1091,6 +1106,55 @@ struct BCDSettingsValueRow: View {
         guard enabled, !choices.isEmpty else { return }
         set(choices[((index ?? -1) + 1) % choices.count].value)
     }
+}
+
+/// The section's name is in a navigation bar above the page (the native Duo Settings): the page does not repeat it as its heading.
+private struct BCDSettingsNativeTitleKey: EnvironmentKey { static let defaultValue = false }
+private struct BCDSettingsRowWidthKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
+extension EnvironmentValues {
+    /// How wide a row of the page is, in points (BCDSettingsValueColumn); zero when unknown.
+    var bcdSettingsRowWidth: CGFloat {
+        get { self[BCDSettingsRowWidthKey.self] }
+        set { self[BCDSettingsRowWidthKey.self] = newValue }
+    }
+    var bcdSettingsNativeTitle: Bool {
+        get { self[BCDSettingsNativeTitleKey.self] }
+        set { self[BCDSettingsNativeTitleKey.self] = newValue }
+    }
+}
+
+/// The hints the native Duo Settings shows along the bottom.
+enum BCDSettingsHints {
+    /// Menu's hint goes upright (there is room for three), and wherever another button's hint says the same word.
+    static func shown(_ hints: [BCDHint], upright: Bool) -> [BCDHint] {
+        hints.filter { hint in
+            guard hint.button == .menu else { return true }
+            return !upright && !hints.contains { $0.button != .menu && $0.title == hint.title }
+        }
+    }
+}
+
+/// How wide a value row's value may be (pure: tests/host/check-duo-layout.py compiles it). An upright phone's layout gave it
+/// 150 pt whatever the row's width, and that layout is also what a wide page gets when it is not an iPad's: the native Duo
+/// interface's Settings on the outer display held sideways has rows 557 pt wide, and "Standard · 1408 × 648" and "Emulated
+/// (standard)" still broke in two there (the first Duo pictures). The value now has 37% of its row when that is more than
+/// 150 pt: rows up to 405 pt wide, which is every upright iPhone, keep 150 pt exactly, and no row gets more than the 230 pt
+/// the other layouts give.
+enum BCDSettingsValueColumn {
+    static let upright: CGFloat = 150
+    static let wide: CGFloat = 230
+    static let share: CGFloat = 0.37
+
+    static func width(row: CGFloat, upright isUpright: Bool) -> CGFloat {
+        isUpright ? min(wide, max(upright, row * share)) : wide
+    }
+
+    /// Beside the sidebar on a phone held sideways the value and the words share the row, and a value gets half of it at the
+    /// most: 195 pt and more on every ordinary iPhone (rows of 403 pt and wider), but 159 pt on the iPhone Duo's outer display
+    /// (rows of 330 pt), where "Standard · 1408 × 648" needs 194. A row under `narrowRow` gives the value its line first, up
+    /// to `wide`, and the words what is left.
+    static let narrowRow: CGFloat = 400
+    static func valueFirst(row: CGFloat, upright isUpright: Bool) -> Bool { !isUpright && row > 0 && row < narrowRow }
 }
 
 /// A row that does something: opens a page, starts a download, clears a cache.
@@ -1364,6 +1428,9 @@ struct BCDDuoSettingsRoot: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // The row is its 44 pt and no more: with the list's own insets around it a row was 74 pt, and the outer display
+                    // on its side showed five of the fourteen sections (the first Duo pictures).
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .tag(section)
                     .id(BCDSettingsID.list(section))
                     .bcdFocusable(BCDSettingsID.list(section), cornerRadius: 12) { model.open(section) }
@@ -1399,9 +1466,12 @@ struct BCDDuoSettingsRoot: View {
 
     private func detail(mode: BCDSettingsNavigator.Mode) -> some View {
         BCDSettingsDetail(section: model.selected)
+            // The bar has the section's name: as large as the other tabs' titles where the page is alone on the screen, and the
+            // page's own heading goes (the first Duo pictures had "Graphics" twice, a small one above a large one).
+            .environment(\.bcdSettingsNativeTitle, true)
             .background { BCDBackdrop() }
             .navigationTitle(model.selected.title)
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(mode == .stacked ? .large : .inline)
             .navigationBarBackButtonHidden(mode == .stacked)
             .toolbar {
                 if mode == .stacked { ToolbarItem(placement: .topBarLeading) { backButton } }
@@ -1436,8 +1506,9 @@ struct BCDDuoSettingsRoot: View {
                 .fixedSize()
                 .accessibilityElement(children: .combine)
             }
-            // Upright there is room for three: Menu's Close goes (B closes from the list too).
-            ForEach(focus.hints.filter { layout != .phonePortrait || $0.button != .menu }) {
+            // Upright there is room for three: Menu's Close goes (B closes from the list too). On its side Menu's goes while B
+            // says the same word: on the list both leave Settings, and the bar read "B Close", "Menu Close". Menu still works.
+            ForEach(BCDSettingsHints.shown(focus.hints, upright: layout == .phonePortrait)) {
                 BCDHintView(hint: $0).fixedSize()
             }
         }

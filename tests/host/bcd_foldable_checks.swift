@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright 2026 thebcd69 (BCD)
 // BCD Material: additional terms under GPL-3.0 section 7 apply; see LICENSE-BCD.md.
+// Modified 2026-11-13 in the Mhsbrian/bcd-games fork (not the official BCD): the inner display's points are 951 x 669, which moves the light Resolution choice to 944x664.
 // Portions copyright 2026 Paulo Eduardo Correa (pauloec): the native iPhone Duo interface (Liquid Glass, system tabs, controller navigation, Windows desktop on Home), from thebcd69/bcd-games pull request #43; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // Portions copyright 2026 Henrique Rocha (iqui27): the iPhone Duo tabletop pose, from thebcd69/bcd-games pull request #31; GPL-3.0-only, modified for BCD in November 2026. See THIRD-PARTY-NOTICES.md.
 // The foldable-iPhone gate, the inner display's shape and the scene-size tracker, compiled on the host by
@@ -108,7 +109,7 @@ func check(_ what: String, _ ok: Bool, _ detail: String = "") {
               && abs(Double(d.w) / Double(d.h) / ResolutionChoices.aspect(outer) - 1) < 0.025)
         let groups = ResolutionChoices.groups(for: inner)
         let own = groups[0].choices.map(\.value)
-        check("the screen-shaped choices are light, default, about 1080p and native", own == ["936x656", "1152x808", "1720x1208", "2670x1878"], "\(own)")
+        check("the screen-shaped choices are light, default, about 1080p and native", own == ["944x664", "1152x808", "1720x1208", "2670x1878"], "\(own)")
         check("the 16:9 sizes say bars above and below, the 4:3 sizes bars at the sides", groups.map(\.title).contains { $0.contains("16:9") && $0.contains("bars above and below") }
               && groups.map(\.title).contains { $0.contains("4:3") && $0.contains("bars at the sides") }, groups.map(\.title).joined(separator: " | "))
         check("no 720-lines special case: the default already has more than 720 lines", ResolutionChoices.screen720(for: inner) == nil)
