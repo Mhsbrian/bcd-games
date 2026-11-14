@@ -4,10 +4,10 @@
 # A Linux stand-in for a command build-ipa.yml expects on a Mac (tools/linux/run-workflow.py).
 # xcrun: --show-sdk-path, --show-sdk-version, --find, and "run this tool for that SDK".
 . "$(dirname "$0")/_env.sh"
-sdk=${SDKROOT:-iphoneos}; action=run
+sdk=${SDKROOT:-iphoneos}; action=run; named=
 while [ $# -gt 0 ]; do
     case $1 in
-        --sdk|-sdk) sdk=$2; shift 2 ;;
+        --sdk|-sdk) sdk=$2; named=1; shift 2 ;;
         --toolchain|-toolchain) shift 2 ;;
         --show-sdk-path|-show-sdk-path) action=path; shift ;;
         --show-sdk-version|-show-sdk-version) action=version; shift ;;
@@ -30,5 +30,11 @@ tool=$1; shift
 case $tool in
     metal-ar|actool|ibtool|simctl|altool|notarytool|momc|xcstringstool)
         echo "xcrun stand-in: Apple's '$tool' exists only on a Mac; this step cannot run on Linux as written" >&2; exit 78 ;;
+esac
+# With no SDK named, or macOS named, xcrun on a Mac runs the tool for the Mac itself: a helper or a test that
+# runs on the machine doing the build. Here that machine is Linux, so Swift builds such a program for Linux
+# (with the open Foundation); the C compilers' stand-in makes the same choice for itself.
+case $tool in swiftc|swift)
+    case "$named:$sdk" in :*|1:macosx*) unset SDKROOT; exec "$tool" "$@" ;; esac ;;
 esac
 SDKROOT=$(bcd_sdk_path "$sdk") BCD_XCRUN_SDK=$sdk exec "$tool" "$@"

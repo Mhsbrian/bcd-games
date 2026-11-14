@@ -151,8 +151,11 @@ public tree and the build stops without it. `tools/linux/converter-from-ipa.py` 
   has that this build's does not (1,342 files against 1,336, signatures aside).
 - **`7zFM.exe`**: its sources include `CommCtrl.h`, which only a case-insensitive file system finds. The
   tracked program is kept, as the step does on any failure.
-- **The workflow's 523 "Check" steps** are not run by default (`--checks`); several compile and run engine
-  code on the build machine with macOS headers.
+- **The workflow's 523 "Check" steps** are not run by default (`--checks` runs them). Of the first 216
+  (the ones before the build steps), 152 pass on Linux. Most of the other 64 compile the app's Swift into
+  a program for the build machine and need Apple-only frameworks (CryptoKit, security-scoped URLs); a few
+  compile engine code with macOS headers or look for files the public tree does not have. The remaining
+  307 have not been run here.
 - **Microsoft's Visual C++ runtime** is fetched by the workflow into the bundle and left out of the
   package, as in upstream's public IPAs; the app downloads it on the device.
 
